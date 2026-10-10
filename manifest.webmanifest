@@ -1,0 +1,15 @@
+{
+  "name": "TSUKERU チェック表",
+  "short_name": "TSUKERU",
+  "description": "授業中にすばやく評価を記録できる、端末内保存のチェック表",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fffdfa",
+  "theme_color": "#fffdfa",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
