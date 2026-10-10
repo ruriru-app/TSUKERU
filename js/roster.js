@@ -64,13 +64,14 @@
     const matchedRowNumbers = new Set();
     const unchanged = [];
     const corrected = [];
+    const identityOwners = new Map(existing.map(student => [`${student.name}\u0000${student.kana || ''}`, student.id]));
 
     for (const row of rows) {
       const student = byNo.get(normalizedNumber(row.no));
       if (!student) continue;
       matchedStudentIds.add(student.id);
       matchedRowNumbers.add(normalizedNumber(row.no));
-      const item = { studentId: student.id, before: { no: normalizedNumber(student.no), name: student.name, kana: student.kana || '' }, after: { ...row, no: normalizedNumber(row.no) } };
+      const item = { studentId: student.id, before: { no: normalizedNumber(student.no), name: student.name, kana: student.kana || '' }, after: { ...row, no: normalizedNumber(row.no) }, recordCount: recordCount(student) };
       if (item.before.name === item.after.name && item.before.kana === item.after.kana) unchanged.push(item);
       else corrected.push(item);
     }
@@ -92,8 +93,14 @@
 
     const added = unmatchedRows.filter(row => !usedRenumberNos.has(normalizedNumber(row.no))).map(row => ({ row: { ...row, no: normalizedNumber(row.no) } }));
     const missing = existing.filter(student => !matchedStudentIds.has(student.id)).map(student => ({ studentId: student.id, student, recordCount: recordCount(student) }));
+    const reassignments = corrected.filter(item => {
+      const owner = identityOwners.get(`${item.after.name}\u0000${item.after.kana || ''}`);
+      return owner && owner !== item.studentId;
+    });
     return {
       unchanged, corrected, added, renumbered,
+      correctedWithRecords: corrected.filter(item => item.recordCount > 0),
+      reassignments,
       missingWithRecords: missing.filter(item => item.recordCount > 0),
       missingWithoutRecords: missing.filter(item => item.recordCount === 0)
     };
@@ -102,8 +109,11 @@
   function applyRosterImport(existingStudents, plan, options = {}) {
     const idFactory = options.idFactory || (() => `student-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const byId = new Map((existingStudents || []).map(student => [student.id, { ...student, no: normalizedNumber(student.no) }]));
+    const reassignmentIds = new Set((plan.reassignments || []).map(item => item.studentId));
     for (const item of plan.corrected || []) {
       const student = byId.get(item.studentId);
+      if (item.recordCount > 0 && !options.allowRecordCorrection) continue;
+      if (reassignmentIds.has(item.studentId) && !options.allowReassignment) continue;
       if (student) Object.assign(student, item.after);
     }
     if (options.allowRenumber) {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tsukeru-shell-v1';
+const CACHE_NAME = 'tsukeru-shell-v2';
 const CACHE_PREFIX = 'tsukeru-shell-';
 const APP_SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest',
@@ -24,7 +24,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
   if (event.request.mode === 'navigate') {
-    event.respondWith(fetch(event.request).catch(() => caches.match('./index.html')));
+    event.respondWith(caches.match('./index.html').then(cached => cached || fetch(event.request)));
     return;
   }
   event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request)));

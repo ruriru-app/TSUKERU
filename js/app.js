@@ -42,7 +42,11 @@ function downloadCurrentBackup(prefix='TSUKERU-backup'){B.downloadBackup(snapsho
 function retrySave(){
  if(pendingPwaUpdate){modal('<h3>TSUKERUの更新版があります</h3><p>入力内容を端末へ保存してから更新します。更新ボタンを押すまで画面は切り替わりません。</p><footer><button onclick="dismissModal()">後で</button><button onclick="installPwaUpdate()">保存して更新</button></footer>');return}
  if(saveFailed){modal('<h3>端末内保存に失敗しました</h3><p>先に緊急バックアップを保存できます。再試行しても失敗する場合は、ブラウザの空き容量と通常モードかを確認してください。</p><footer><button onclick="downloadCurrentBackup(\'TSUKERU-emergency\')">緊急バックアップ</button><button onclick="dismissModal();saveQueue.retry().catch(()=>{})">保存を再試行</button></footer>');return}
+ if(saveQueue?.isDirty()){modal('<h3>未保存の変更があります</h3><p>通常はまもなく自動保存されます。画面を閉じる前に、今すぐ端末へ保存するか、緊急バックアップを保存できます。</p><footer><button onclick="downloadCurrentBackup(\'TSUKERU-emergency\')">緊急バックアップ</button><button onclick="saveNow()">今すぐ保存</button></footer>');return}
  if(persistenceReady)scheduleSave();
+}
+async function saveNow(){
+ try{await saveQueue.flush();dismissModal()}catch(error){alert('保存できませんでした。緊急バックアップを保存してください。\n'+error.message)}
 }
 async function installPwaUpdate(){
  if(!pendingPwaUpdate)return dismissModal();
@@ -65,13 +69,24 @@ async function handleRestoreFile(file){
 }
 async function confirmRestore(){
  if(!pendingRestoreEnvelope||!storageDb)return alert('復元するバックアップをもう一度選んでください');
- const next=pendingRestoreEnvelope;
+ const next=pendingRestoreEnvelope,previous=snapshotState();
+ let replaced=false;
  try{
   if(saveQueue?.isDirty())await saveQueue.flush();
   downloadCurrentBackup('TSUKERU-before-restore');
   await S.writeCurrentState(storageDb,next.state);
+  replaced=true;
   applyState(next.state);pendingRestoreEnvelope=null;persistenceReady=true;dismissModal();render();await saveQueue.flush();
- }catch(error){alert('復元を完了できませんでした。現在の画面データは維持しています。\n'+error.message)}
+ }catch(error){
+  if(!replaced)return alert('復元を完了できませんでした。現在の画面データは維持しています。\n'+error.message);
+  try{
+   await S.writeCurrentState(storageDb,previous);applyState(previous);pendingRestoreEnvelope=null;persistenceReady=true;dismissModal();render();await saveQueue.flush();
+   alert('復元を完了できなかったため、復元前のデータへ戻しました。\n'+error.message);
+  }catch(rollbackError){
+   persistenceReady=false;pendingRestoreEnvelope=null;updateSaveStatus('error',rollbackError);
+   alert('復元と元データへの復帰に失敗しました。自動保存を止めて、先ほど保存した「TSUKERU-before-restore」バックアップを保管してください。\n'+rollbackError.message);
+  }
+ }
 }
 function chooseFirstRun(kind){
  applyState(kind==='blank'?createStarterState():M.createDemoState({nowIso:new Date().toISOString()}));persistenceReady=true;dismissModal();render();saveQueue.flush().catch(()=>{});if(kind==='blank')setTimeout(()=>openClassSettings(),0);
@@ -91,6 +106,7 @@ async function initializePersistence(){
 }
 addEventListener('online',()=>updateSaveStatus(saveFailed?'error':'saved'));
 addEventListener('offline',()=>updateSaveStatus(saveFailed?'error':'offline'));
+addEventListener('beforeunload',event=>{if(saveQueue?.isDirty()){event.preventDefault();event.returnValue=''}});
 function daysBetween(a,b){return D.daysBetween(a,b)}
 
 // All receipt/lesson calculations use the same class calendar (including exceptions).
@@ -242,9 +258,9 @@ function render(){
 }
 
 function palette(){$('tools').hidden=active<0||$('fold').textContent==='+';$('numBox').hidden=method!=='number';$('palette').hidden=method==='number';$('dateBox').hidden=mode!=='日付'||method==='cycle'&&!override;let a=sheet().type==='evaluation'?['○','△','×','欠']:['○','△','×','欠','再','日付'];$('palette').innerHTML=a.map(x=>`<button style="background:${colors[x]}" ${method==='cycle'&&['○','△','×'].includes(x)?'disabled':''} onclick="mode='${x}';override=method==='cycle';if(mode==='日付')$('date').value=today();palette()">${x}</button>`).join('')+(method==='cycle'?'<button class="wide" onclick="override=false;palette()">↩ 連続へ</button>':'')+(method==='direct'?'<button class="wide" onclick="fill(\'○\')">残りを○</button><button class="wide" onclick="fill(\'×\')">残りを×</button>':'')+(sheet().type==='submission'?'<button class="wide" style="background:#eee6f8" onclick="batchReturn()">再提出分を返却</button>':'')}
-function modal(h,extra=''){$('modal').innerHTML='<div class="overlay"><div class="dialog '+extra+'">'+h+'</div></div>'}function dismissModal(){$('modal').innerHTML=''}function lock(j){if(active===j){active=-1;method='';render();return}active=j;override=false;if(sheet().type==='number'){method='number';render();return}modal(`<h3>${sheet().columns[j].title}</h3><p>入力方式を選択</p><footer><button onclick="method='cycle';dismissModal();render()">連続タップ</button><button onclick="method='direct';dismissModal();render()">パレット指定</button></footer>`);render()}function cell(j,i){if(j!==active||numeric)return;if(method==='number'){numberRow=i;$('number').value=val(j,i);return}let v=method==='cycle'&&!override?['','○','△','×'][(['','○','△','×'].indexOf(val(j,i))+1)%4]:mode==='日付'?'日付':mode;if(sheet().type==='submission')storeSubmission(j,i,v);else setVal(j,i,v)}function fill(v){if(active<0)return;rosterNames.forEach((_,i)=>{if(!val(active,i))sheet().values[stableKey(active,i)]=v});render()}function add(j){modal(`<h3>列を追加</h3><label>タイトル<input id="title" placeholder="新しい課題"></label>${sheet().type==='submission'?`<label>提出期限<input type="date" id="due" value="${today()}"></label><label><input type="checkbox" id="inherit" checked> 左の列の減点設定を引き継ぐ</label><label>減点間隔（日）<input type="number" id="interval" value="${sheet().columns[j-1]?.interval||3}"></label><label>減点幅<input type="number" id="penalty" value="${sheet().columns[j-1]?.penalty||1}"></label>`:''}<footer><button onclick="dismissModal()">キャンセル</button><button onclick="saveAdd(${j})">追加</button></footer>`)}function saveAdd(j){let title=$('title').value.trim();if(!title)return alert('タイトルを入力してください');let prev=sheet().columns[j-1],c={id:M.defaultIdFactory('column'),title,includeInTotal:true,due:$('due')?.value||'',base:5,interval:Math.max(1,+$('interval')?.value||3),penalty:Math.max(0,+$('penalty')?.value||1),basis:prev?.basis||'days',redoPenalty:prev?.redoPenalty??1,zeroDays:prev?.zeroDays??30,zeroFloor:prev?.zeroFloor??true};if($('inherit')?.checked&&prev)c.base=prev.base;sheet().columns.splice(j,0,c);active=-1;dismissModal();render()}function updateIntervalLabel(){let b=$('editBasis')?.value,el=$('intervalQuestion');if(!el)return;el.textContent=b==='lesson'?'授業実施回数の何回ごとに減点しますか？':b==='days'?'何日ごとに減点しますか？':'減点なし（間隔の設定は不要）';let field=$('editInterval');if(field)field.disabled=b==='none'}function editColumn(j){let c=sheet().columns[j];modal(`<h3>列の設定：${c.title}</h3><label>タイトル<input id="editTitle" value="${c.title}"></label>${sheet().type==='submission'?`<label>提出期限<input id="editDue" type="date" value="${c.due||''}"></label><label>満点<input id="editBase" type="number" min="0" value="${c.base}"></label><label>減点方式<select id="editBasis" onchange="updateIntervalLabel()"><option value="days" ${c.basis==='days'?'selected':''}>日数基準</option><option value="lesson" ${c.basis==='lesson'?'selected':''}>授業日基準（クラス設定を参照）</option><option value="none" ${c.basis==='none'?'selected':''}>減点なし</option></select></label><label><span id="intervalQuestion">減点間隔</span><input id="editInterval" type="number" min="1" value="${c.interval}"></label><label>減点確定ごとに何点減らしますか？<input id="editPenalty" type="number" min="0" value="${c.penalty}"></label><label>再提出対象を減点する場合は何点引きますか？<input id="editRedo" type="number" min="0" value="${c.redoPenalty}"></label><p class="hint">※ 再提出が必要なことを児童に伝え、課題を返却するまでの間は、遅延による追加減点は確定しません。返却後、次の授業日を過ぎると、設定したルールに従って減点します。</p><label>未提出を0点確定する日数<input id="editZero" type="number" min="1" value="${c.zeroDays}"></label><label><input id="editFloor" type="checkbox" ${c.zeroFloor?'checked':''}> 減点が0点に達したら確定</label><p class="hint">変更した評価基準は、この列の全児童に適用されます。既存の提出日は変わりません。</p>`:''}<footer><button onclick="dismissModal()">戻る</button><button onclick="saveColumn(${j})">全員に適用</button></footer>`);updateIntervalLabel()}
+function modal(h,extra=''){$('modal').innerHTML='<div class="overlay"><div class="dialog '+extra+'">'+h+'</div></div>'}function dismissModal(){$('modal').innerHTML=''}function lock(j){if(active===j){active=-1;method='';render();return}active=j;override=false;if(sheet().type==='number'){method='number';render();return}modal(`<h3>${esc(sheet().columns[j].title)}</h3><p>入力方式を選択</p><footer><button onclick="method='cycle';dismissModal();render()">連続タップ</button><button onclick="method='direct';dismissModal();render()">パレット指定</button></footer>`);render()}function cell(j,i){if(j!==active||numeric)return;if(method==='number'){numberRow=i;$('number').value=val(j,i);return}let v=method==='cycle'&&!override?['','○','△','×'][(['','○','△','×'].indexOf(val(j,i))+1)%4]:mode==='日付'?'日付':mode;if(sheet().type==='submission')storeSubmission(j,i,v);else setVal(j,i,v)}function fill(v){if(active<0)return;rosterNames.forEach((_,i)=>{if(!val(active,i))sheet().values[stableKey(active,i)]=v});render()}function add(j){modal(`<h3>列を追加</h3><label>タイトル<input id="title" placeholder="新しい課題"></label>${sheet().type==='submission'?`<label>提出期限<input type="date" id="due" value="${today()}"></label><label><input type="checkbox" id="inherit" checked> 左の列の減点設定を引き継ぐ</label><label>減点間隔（日）<input type="number" id="interval" value="${sheet().columns[j-1]?.interval||3}"></label><label>減点幅<input type="number" id="penalty" value="${sheet().columns[j-1]?.penalty||1}"></label>`:''}<footer><button onclick="dismissModal()">キャンセル</button><button onclick="saveAdd(${j})">追加</button></footer>`)}function saveAdd(j){let title=$('title').value.trim();if(!title)return alert('タイトルを入力してください');let prev=sheet().columns[j-1],c={id:M.defaultIdFactory('column'),title,includeInTotal:true,hidden:false,due:$('due')?.value||'',base:5,interval:Math.max(1,+$('interval')?.value||3),penalty:Math.max(0,+$('penalty')?.value||1),basis:prev?.basis||'days',redoPenalty:prev?.redoPenalty??1,zeroDays:prev?.zeroDays??30,zeroFloor:prev?.zeroFloor??true};if($('inherit')?.checked&&prev)c.base=prev.base;sheet().columns.splice(j,0,c);active=-1;dismissModal();render()}function updateIntervalLabel(){let b=$('editBasis')?.value,el=$('intervalQuestion');if(!el)return;el.textContent=b==='lesson'?'授業実施回数の何回ごとに減点しますか？':b==='days'?'何日ごとに減点しますか？':'減点なし（間隔の設定は不要）';let field=$('editInterval');if(field)field.disabled=b==='none'}function editColumn(j){let c=sheet().columns[j];modal(`<h3>列の設定：${esc(c.title)}</h3><label>タイトル<input id="editTitle" value="${esc(c.title)}"></label>${sheet().type==='submission'?`<label>提出期限<input id="editDue" type="date" value="${esc(c.due||'')}"></label><label>満点<input id="editBase" type="number" min="0" value="${c.base}"></label><label>減点方式<select id="editBasis" onchange="updateIntervalLabel()"><option value="days" ${c.basis==='days'?'selected':''}>日数基準</option><option value="lesson" ${c.basis==='lesson'?'selected':''}>授業日基準（クラス設定を参照）</option><option value="none" ${c.basis==='none'?'selected':''}>減点なし</option></select></label><label><span id="intervalQuestion">減点間隔</span><input id="editInterval" type="number" min="1" value="${c.interval}"></label><label>減点確定ごとに何点減らしますか？<input id="editPenalty" type="number" min="0" value="${c.penalty}"></label><label>再提出対象を減点する場合は何点引きますか？<input id="editRedo" type="number" min="0" value="${c.redoPenalty}"></label><p class="hint">※ 再提出が必要なことを児童に伝え、課題を返却するまでの間は、遅延による追加減点は確定しません。返却後、次の授業日を過ぎると、設定したルールに従って減点します。</p><label>未提出を0点確定する日数<input id="editZero" type="number" min="1" value="${c.zeroDays}"></label><label><input id="editFloor" type="checkbox" ${c.zeroFloor?'checked':''}> 減点が0点に達したら確定</label><p class="hint">変更した評価基準は、この列の全児童に適用されます。既存の提出日は変わりません。</p>`:''}<footer><button onclick="dismissModal()">戻る</button><button onclick="saveColumn(${j})">全員に適用</button></footer>`);updateIntervalLabel()}
 function saveColumn(j){let c=sheet().columns[j];c.title=$('editTitle').value.trim()||c.title;if(sheet().type==='submission'){c.due=$('editDue').value;c.base=Math.max(0,+$('editBase').value||0);c.basis=$('editBasis').value;c.interval=Math.max(1,+$('editInterval').value||1);c.penalty=Math.max(0,+$('editPenalty').value||0);c.redoPenalty=Math.max(0,+$('editRedo').value||0);c.zeroDays=Math.max(1,+$('editZero').value||30);c.zeroFloor=$('editFloor').checked}dismissModal();render()}
-function menu(j){modal(`<h3>${sheet().columns[j].title}</h3><footer style="flex-wrap:wrap"><button onclick="dismissModal();editColumn(${j})">列の設定</button><button onclick="sheet().columns[${j}].hidden=true;active=-1;dismissModal();render()">非表示</button><button onclick="dismissModal();add(${j+1})">設定を引き継いで追加</button><button onclick="dismissModal()">閉じる</button></footer>`)}
+function menu(j){modal(`<h3>${esc(sheet().columns[j].title)}</h3><footer style="flex-wrap:wrap"><button onclick="dismissModal();editColumn(${j})">列の設定</button><button onclick="sheet().columns[${j}].hidden=true;active=-1;dismissModal();render()">非表示</button><button onclick="dismissModal();add(${j+1})">設定を引き継いで追加</button><button onclick="dismissModal()">閉じる</button></footer>`)}
 
 // Class management: independent from MITORI, using its registration workflow.
 function syncRoster(){const r=classInfo[cls];rosterNames=r?.students?.map(x=>x.name)||names;rosterKana=r?.students?.map(x=>x.kana||x.name)||kana;}
@@ -284,7 +300,8 @@ function previewRoster(){
  const {parsed,plan}=rosterPlan(),preview=$('rosterPreview');
  if(parsed.errors.length){preview.innerHTML='<strong>修正が必要です</strong><br>'+parsed.errors.map(error=>`${error.line}行目：${esc(error.message)}`).join('<br>');return}
  const summary=[`読み取り：${parsed.rows.length}人`,`変更なし：${plan.unchanged.length}人`,`表記修正：${plan.corrected.length}人`,`追加：${plan.added.length}人`,`番号変更候補：${plan.renumbered.length}人`,`貼り付けにない児童：${plan.missingWithRecords.length+plan.missingWithoutRecords.length}人`];
- preview.innerHTML=summary.join(' ／ ')+(parsed.warnings.length?`<br>よみがな空欄：${parsed.warnings.length}人`:'')+((plan.missingWithRecords.length||plan.missingWithoutRecords.length)?'<br><button type="button" onclick="saveRosterWithRemoval()">貼り付けにいない児童を削除…</button>':'');
+ const safety=(plan.reassignments.length?`<br><strong>要確認：${plan.reassignments.length}人は、別の児童との入れ替えに見えます。</strong>`:'')+(plan.correctedWithRecords.length?`<br>評価記録がある表記修正：${plan.correctedWithRecords.length}人（保存時に確認します）`:'');
+ preview.innerHTML=summary.join(' ／ ')+(parsed.warnings.length?`<br>よみがな空欄：${parsed.warnings.length}人`:'')+safety+((plan.missingWithRecords.length||plan.missingWithoutRecords.length)?'<br><button type="button" onclick="saveRosterWithRemoval()">貼り付けにいない児童を削除…</button>':'');
 }
 function hasStudentRecord(key,studentId){
  return (db[key]||[]).some(s=>Object.entries(s.values).some(([k,v])=>k.endsWith(':'+studentId)&&v!=='')||Object.entries(s.meta||{}).some(([k,v])=>k.endsWith(':'+studentId)&&Object.keys(v||{}).length>0));
@@ -309,18 +326,30 @@ function saveClassSettings(removeMissing=false){
  if(students.some(x=>Number(x.no)>count))return alert('出席番号が設定人数の範囲外です');
  const old=cls,previous=classEditingNew?null:classInfo[old];
  if(classes.some(key=>(classEditingNew||key!==old)&&classInfo[key]?.school===school&&classInfo[key]?.name===name))return alert('この学校には同じクラス名が既に登録されています');
+ let allowRecordCorrection=plan.correctedWithRecords.length===0,allowReassignment=plan.reassignments.length===0;
+ if(plan.reassignments.length){
+  const detail=plan.reassignments.map(item=>`${item.before.no} ${item.before.name} → ${item.after.name}`).join('\n');
+  if(!confirm(`出席番号は同じまま氏名が入れ替わっています。評価記録を別の氏名へ対応させる操作です。\n${detail}\n意図した入れ替えですか？`))return;
+  if(prompt('記録との対応が変わります。続けるには「入れ替え」と入力してください。')!=='入れ替え')return;
+  allowRecordCorrection=true;allowReassignment=true;
+ }else if(plan.correctedWithRecords.length){
+  const detail=plan.correctedWithRecords.map(item=>`${item.before.no} ${item.before.name} → ${item.after.name}`).join('\n');
+  if(!confirm(`評価記録がある児童の表記を変更します。記録は同じ児童IDへ引き継がれます。\n${detail}\n氏名・よみがなの表記修正として保存しますか？`))return;
+  allowRecordCorrection=true;
+ }
  if(plan.renumbered.length&&!confirm('同じ氏名・よみがなで出席番号だけが変わっています。\n'+plan.renumbered.map(item=>`${item.before.no} → ${item.after.no} ${item.after.name}`).join('\n')+'\n同一児童の番号変更として記録を引き継ぎますか？'))return;
  const key=classEditingNew?M.defaultIdFactory('class'):old;
  const removeStudentIds=removeMissing?[...plan.missingWithRecords,...plan.missingWithoutRecords].map(item=>item.studentId):[];
- let imported=R.applyRosterImport(existing,plan,{idFactory:M.defaultIdFactory,allowRenumber:plan.renumbered.length>0,removeStudentIds,allowRecordDeletion:removeMissing});
+ let imported=R.applyRosterImport(existing,plan,{idFactory:M.defaultIdFactory,allowRenumber:plan.renumbered.length>0,allowRecordCorrection,allowReassignment,removeStudentIds,allowRecordDeletion:removeMissing});
  if(removeMissing&&removeStudentIds.length){
   const suffixes=removeStudentIds.map(id=>':'+id);
   (db[old]||[]).forEach(s=>{for(const k of Object.keys(s.values||{}))if(suffixes.some(suffix=>k.endsWith(suffix)))delete s.values[k];for(const k of Object.keys(s.meta||{}))if(suffixes.some(suffix=>k.endsWith(suffix)))delete s.meta[k]});
  }
  const byNo=new Map(imported.map(student=>[Number(student.no),student]));
- const finalStudents=Array.from({length:count},(_,i)=>byNo.get(i+1)||{id:M.defaultIdFactory('student'),no:String(i+1),name:'（未登録）',kana:''});
+ const finalCount=Math.max(count,...imported.map(student=>Number(student.no)||0));
+ const finalStudents=Array.from({length:finalCount},(_,i)=>byNo.get(i+1)||{id:M.defaultIdFactory('student'),no:String(i+1),name:'（未登録）',kana:''});
  if(classEditingNew){classes.push(key);db[key]=[create('提出物チェック','submission'),create('活動評価','evaluation'),create('点数記録','number')]}
- classInfo[key]={id:key,school,name,year,count,weekdays,students:finalStudents,exceptions:previous?.exceptions||{},sheets:db[key]};
+ classInfo[key]={id:key,school,name,year,count:finalCount,weekdays,students:finalStudents,exceptions:previous?.exceptions||{},sheets:db[key]};
  classDrafts.delete(classFormOwner);classFormOwner=null;classEditingNew=false;
  cls=key;idx=0;active=-1;syncRoster();dismissModal();render();
 }
