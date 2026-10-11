@@ -1,9 +1,10 @@
-const CACHE_NAME = 'tsukeru-shell-v12';
+const CACHE_NAME = 'tsukeru-shell-v13';
 const CACHE_PREFIX = 'tsukeru-shell-';
 const APP_SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest',
   './js/domain.js', './js/workspace.js', './js/palette.js', './js/model.js', './js/roster.js', './js/storage.js',
-  './js/backup.js', './js/pwa.js', './js/interactions.js', './js/palette-settings.js', './js/settings.js', './js/app.js',
+  './js/backup.js', './js/pwa.js', './js/interactions.js', './js/palette-settings.js', './js/settings.js',
+  './js/export-model.js', './js/csv-export.js', './js/xlsx-export.js', './js/print-export.js', './js/app.js',
   './assets/icon_home.svg', './assets/icon_setting.svg',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
 ];

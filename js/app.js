@@ -1,6 +1,6 @@
 
 const $=x=>document.getElementById(x),today=()=>new Date().toLocaleDateString('sv-SE');
-const M=globalThis.TSUKERUModel,W=globalThis.TSUKERUWorkspace,D=globalThis.TSUKERUDomain,R=globalThis.TSUKERURoster,S=globalThis.TSUKERUStorage,B=globalThis.TSUKERUBackup,P=globalThis.TSUKERUPwa,Palette=globalThis.TSUKERUPalette,Interactions=globalThis.TSUKERUInteractions,Settings=globalThis.TSUKERUSettings;
+const M=globalThis.TSUKERUModel,W=globalThis.TSUKERUWorkspace,D=globalThis.TSUKERUDomain,R=globalThis.TSUKERURoster,S=globalThis.TSUKERUStorage,B=globalThis.TSUKERUBackup,P=globalThis.TSUKERUPwa,Palette=globalThis.TSUKERUPalette,Interactions=globalThis.TSUKERUInteractions,Settings=globalThis.TSUKERUSettings,ExportModel=globalThis.TSUKERUExportModel,CsvExport=globalThis.TSUKERUCsv,XlsxExport=globalThis.TSUKERUXlsx,PrintExport=globalThis.TSUKERUPrint;
 const names=M.DEMO_NAMES,kana=M.DEMO_KANA,colors={'A':'#E4F4E7','○':'#E4F4E7','B':'#FFF3C9','△':'#FFF3C9','C':'#F9E0E0','×':'#F9E0E0','欠':'#EDEDED','再':'#EEE6F8','再返':'#EEE6F8','日付':'#FFF1BF'};
 let appState=M.createDemoState({nowIso:new Date().toISOString()});
 let classes=appState.classes.map(c=>c.id);
@@ -52,6 +52,33 @@ function updateSaveStatus(status,error){
 }
 function scheduleSave(){if(persistenceReady&&saveQueue)saveQueue.schedule(snapshotState())}
 function downloadCurrentBackup(prefix='TSUKERU-backup'){B.downloadBackup(snapshotState(),new Date(),prefix)}
+function exportClassIds(mode){return ExportModel.resolveClassIds(snapshotState(),{sheetId:sheet()?.id,mode,currentClassId:cls})}
+function openExportDialog(){
+ if(!sheet())return alert('出力するシートがありません');
+ let allIds=[];try{allIds=exportClassIds('all')}catch(error){return alert(error.message)}
+ const currentName=classLabel(cls),allLabel='このシートの全クラス';
+ modal(`<button type="button" class="dialog-close" aria-label="閉じる" onclick="dismissModal()">×</button><h3>チェック表を出力</h3><p class="hint">現在表示している「${esc(sheet().name)}」を書き出します。</p><div class="export-options"><fieldset><legend>形式</legend><div class="export-format-grid"><label class="export-option"><input type="radio" name="exportFormat" value="xlsx" checked><span>Excel（.xlsx）<small>クラスごとに別シートで保存</small></span></label><label class="export-option"><input type="radio" name="exportFormat" value="csv"><span>CSV（UTF-8）<small>全クラスを1つの表で保存</small></span></label><label class="export-option"><input type="radio" name="exportFormat" value="print-records"><span>記録入りPDF・印刷<small>A4縦の印刷画面を開く</small></span></label><label class="export-option"><input type="radio" name="exportFormat" value="print-blank"><span>空欄ひな形PDF・印刷<small>氏名と記録を載せない空欄版</small></span></label></div></fieldset><fieldset><legend>対象</legend><div class="export-scope"><label class="export-option"><input type="radio" name="exportScope" value="current" checked><span>現在のクラス<small>${esc(currentName)}</small></span></label><label class="export-option"><input type="radio" name="exportScope" value="all"><span>${allLabel}<small>${allIds.length}クラス</small></span></label></div></fieldset><div class="export-privacy"><strong>個人情報を含みます</strong><br>出力したファイルやPDFは、学校が指定するGoogleドライブ等の保存先で管理してください。別端末へ自動同期はされません。</div></div><p id="exportError" class="export-error" role="alert"></p><footer><button onclick="dismissModal()">キャンセル</button><button id="runExportButton" class="primary" onclick="runSelectedExport()">出力する</button></footer>`,'export-dialog');
+}
+function runSelectedExport(){const format=document.querySelector('input[name="exportFormat"]:checked')?.value,scope=document.querySelector('input[name="exportScope"]:checked')?.value;runExport(format,scope)}
+function runExport(format,mode){
+ const errorBox=$('exportError');if(errorBox)errorBox.textContent='';
+ try{
+  if(!['xlsx','csv','print-records','print-blank'].includes(format))throw new Error('出力形式を選択してください');
+  const state=snapshotState(),sheetId=sheet()?.id,classIds=ExportModel.resolveClassIds(state,{sheetId,mode,currentClassId:cls});
+  const bundle=ExportModel.createBundle(state,{sheetId,classIds,today:today(),exportedAt:new Date().toISOString()});
+  if(format==='xlsx')XlsxExport.download(bundle);
+  else if(format==='csv')CsvExport.download(bundle);
+  else{
+   const result=PrintExport.open(bundle,{blank:format==='print-blank',windowRef:window});
+   if(!result.ok&&result.reason==='popup-blocked')throw new Error('印刷画面を開けませんでした。ブラウザのポップアップを許可して、もう一度お試しください。');
+  }
+  dismissModal();return {ok:true,classIds};
+ }catch(error){
+  const message=error?.message||'出力できませんでした。もう一度お試しください。';
+  if(errorBox)errorBox.textContent=message;else alert(message);
+  return {ok:false,error:message};
+ }
+}
 function retrySave(){
  if(pendingPwaUpdate){modal('<h3>TSUKERUの更新版があります</h3><p>入力内容を端末へ保存してから更新します。更新ボタンを押すまで画面は切り替わりません。</p><footer><button onclick="dismissModal()">後で</button><button onclick="installPwaUpdate()">保存して更新</button></footer>');return}
  if(saveFailed){modal('<h3>端末内保存に失敗しました</h3><p>先に緊急バックアップを保存できます。再試行しても失敗する場合は、ブラウザの空き容量と通常モードかを確認してください。</p><footer><button onclick="downloadCurrentBackup(\'TSUKERU-emergency\')">緊急バックアップ</button><button onclick="dismissModal();saveQueue.retry().catch(()=>{})">保存を再試行</button></footer>');return}
@@ -304,7 +331,7 @@ function render(){
  $('cl').innerHTML=`<optgroup label="クラス">${classOptions}</optgroup>${groupOptions?`<optgroup label="合同グループ">${groupOptions}</optgroup>`:''}<option value="__settings__">⚙ クラス設定・追加</option>`;
  $('sh').innerHTML=sheetList().map((x,i)=>`<option value="${i}" ${idx===i?'selected':''}>${esc(x.name)}</option>`).join('');
  const isHome=appState.ui.view==='home',isSettings=appState.ui.view==='settings';document.body.dataset.view=isHome?'home':isSettings?'settings':'record';
- $('recordControls').hidden=isHome||isSettings;$('homeView').hidden=!isHome;$('recordView').hidden=isHome||isSettings;$('settingsView').hidden=!isSettings;$('float').hidden=isHome||isSettings;
+ $('recordControls').hidden=isHome||isSettings;$('exportButton').hidden=isHome||isSettings;$('homeView').hidden=!isHome;$('recordView').hidden=isHome||isSettings;$('settingsView').hidden=!isSettings;$('float').hidden=isHome||isSettings;
  if(isHome){renderHome();scheduleSave();return}
  if(isSettings){
   Settings.mount($('settingsView'),{
