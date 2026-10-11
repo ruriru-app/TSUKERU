@@ -37,6 +37,8 @@
       createdAt: envelope.createdAt,
       classCount: classes.length,
       studentCount: classes.reduce((sum, item) => sum + (item.students?.length || 0), 0),
+      paletteCount: Array.isArray(envelope.state?.preferences?.palettes) ? envelope.state.preferences.palettes.length : 0,
+      groupCount: Array.isArray(envelope.state?.groups) ? envelope.state.groups.length : 0,
       columnCount: Array.isArray(envelope.state?.sheetDefinitions)
         ? envelope.state.sheetDefinitions.reduce((sum, sheet) => sum + (sheet.columns?.length || 0), 0)
         : classes.reduce((sum, item) => sum + (item.sheets || []).reduce((sheetSum, sheet) => sheetSum + (sheet.columns?.length || 0), 0), 0)

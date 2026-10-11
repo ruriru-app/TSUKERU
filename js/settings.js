@@ -1,6 +1,7 @@
 (function (root) {
   const W = root.TSUKERUWorkspace;
   const P = root.TSUKERUPalette;
+  const PaletteSettings = root.TSUKERUPaletteSettings;
   const sections = [
     ['classes', 'クラス設定'],
     ['groups', '合同グループ設定'],
@@ -14,7 +15,6 @@
   let mountPoint = null;
   let groupDraft = null;
   let sheetDraft = null;
-  let paletteDrafts = null;
 
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
   const classLabel = (state, classId) => {
@@ -25,7 +25,7 @@
   function shell() {
     const buttons = sections.map(([id, label]) => `<button type="button" data-settings-nav="${id}" class="${activeSection === id ? 'selected' : ''}">${label}</button>`).join('');
     const options = sections.map(([id, label]) => `<option value="${id}" ${activeSection === id ? 'selected' : ''}>${label}</option>`).join('');
-    mountPoint.innerHTML = `<div class="settings-layout"><aside class="settings-sidebar" aria-label="設定メニュー"><h1>設定</h1><nav>${buttons}</nav></aside><div class="settings-main"><label class="settings-nav-select-wrap">設定メニュー<select class="settings-nav-select" aria-label="設定メニュー">${options}</select></label><div class="settings-content"></div></div></div>`;
+    mountPoint.innerHTML = `<div class="settings-layout ${activeSection === 'palette' ? 'palette-settings-layout' : ''}"><aside class="settings-sidebar" aria-label="設定メニュー"><h1>設定</h1><nav>${buttons}</nav></aside><div class="settings-main"><label class="settings-nav-select-wrap">設定メニュー<select class="settings-nav-select" aria-label="設定メニュー">${options}</select></label><div class="settings-content"></div></div></div>`;
     mountPoint.querySelectorAll('[data-settings-nav]').forEach(button => button.addEventListener('click', () => selectSection(button.dataset.settingsNav)));
     mountPoint.querySelector('.settings-nav-select').addEventListener('change', event => selectSection(event.target.value));
     renderSection();
@@ -36,7 +36,6 @@
     activeSection = sectionId;
     if (sectionId !== 'groups') groupDraft = null;
     if (sectionId !== 'sheets') sheetDraft = null;
-    if (sectionId !== 'palette') paletteDrafts = null;
     shell();
   }
 
@@ -59,7 +58,10 @@
     const groups = state.groups.map(group => { const shared=state.sheetDefinitions.filter(sheet=>sheet.scope.type==='group'&&sheet.scope.groupId===group.id&&!sheet.archivedAt).map(sheet=>sheet.name);return `<button type="button" class="group-summary" data-group-card data-edit-group="${escapeHtml(group.id)}"><strong>${escapeHtml(group.name)}</strong><span>${group.classIds.map(id => escapeHtml(classLabel(state, id))).join('・')}</span><span>${shared.length?`共有シート：${shared.map(escapeHtml).join('・')}`:'共有シート：なし'}</span></button>`; }).join('');
     const checks = state.classes.map(item => `<label><input type="checkbox" data-group-class value="${escapeHtml(item.id)}" ${groupDraft.classIds.includes(item.id) ? 'checked' : ''}>${escapeHtml(classLabel(state, item.id))}</label>`).join('');
     const order = groupDraft.classIds.map((id, index) => `<li><span>${escapeHtml(classLabel(state, id))}</span><span><button type="button" aria-label="${escapeHtml(classLabel(state, id))}を上へ" data-order-up="${index}" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" aria-label="${escapeHtml(classLabel(state, id))}を下へ" data-order-down="${index}" ${index === groupDraft.classIds.length - 1 ? 'disabled' : ''}>↓</button></span></li>`).join('');
-    content.innerHTML = `<div class="settings-section-heading"><div><h2>合同グループ設定</h2><p>同じ評価基準を使うクラスをまとめます。シートはここで選ばなくても作成できます。</p></div><button type="button" data-new-group>新しい合同グループ</button></div><div class="group-settings-grid"><div class="group-list">${groups || '<p class="settings-empty">合同グループはまだありません。</p>'}</div><form class="group-editor"><label>グループ名<input id="groupName" value="${escapeHtml(groupDraft.name)}" placeholder="例：6年合同"></label><fieldset><legend>含めるクラス</legend>${checks}</fieldset><div><h3>名簿をつなぐ順番</h3><ol data-group-order>${order || '<li class="settings-empty">クラスを選んでください。</li>'}</ol></div><p class="settings-message" role="status"></p><button type="submit" class="primary">${groupDraft.id ? '合同グループを更新' : '合同グループを登録'}</button>${groupDraft.id?'<button type="button" class="danger-outline" data-delete-group>合同グループを削除</button>':''}</form></div>`;
+    const sharedSheets = groupDraft.id ? state.sheetDefinitions.filter(sheet => sheet.scope.type === 'group' && sheet.scope.groupId === groupDraft.id && !sheet.archivedAt) : [];
+    const sharedRows = sharedSheets.map(sheet => `<div class="group-shared-row"><span>${escapeHtml(sheet.name)}</span><button type="button" data-detach-shared-sheet="${escapeHtml(sheet.id)}">共有を解除</button></div>`).join('');
+    const sharedPanel = groupDraft.id ? `<section class="group-shared-sheets"><h3>共有シート</h3><p>合同グループの記録で使うシートです。</p>${sharedRows || '<p class="settings-empty">共有シートはありません。記録画面でこの合同グループを選ぶと登録できます。</p>'}</section>` : '';
+    content.innerHTML = `<div class="settings-section-heading"><div><h2>合同グループ設定</h2><p>同じ評価基準を使うクラスをまとめます。シートはここで選ばなくても作成できます。</p></div><button type="button" data-new-group>新しい合同グループ</button></div><div class="group-settings-grid"><div class="group-list">${groups || '<p class="settings-empty">合同グループはまだありません。</p>'}</div><form class="group-editor"><label>グループ名<input id="groupName" value="${escapeHtml(groupDraft.name)}" placeholder="例：6年合同"></label><fieldset><legend>含めるクラス</legend>${checks}</fieldset><div><h3>名簿をつなぐ順番</h3><ol data-group-order>${order || '<li class="settings-empty">クラスを選んでください。</li>'}</ol></div>${sharedPanel}<p class="settings-message" role="status"></p><button type="submit" class="primary">${groupDraft.id ? '合同グループを更新' : '合同グループを登録'}</button>${groupDraft.id?'<button type="button" class="danger-outline" data-delete-group>合同グループを削除</button>':''}</form></div>`;
     content.querySelector('[data-new-group]').addEventListener('click', () => { beginGroup(state); renderSection(); });
     content.querySelectorAll('[data-edit-group]').forEach(button => button.addEventListener('click', () => { beginGroup(state, button.dataset.editGroup); renderSection(); }));
     content.querySelectorAll('[data-group-class]').forEach(input => input.addEventListener('change', () => {
@@ -70,6 +72,21 @@
     }));
     content.querySelectorAll('[data-order-up]').forEach(button => button.addEventListener('click', () => moveGroupClass(Number(button.dataset.orderUp), -1)));
     content.querySelectorAll('[data-order-down]').forEach(button => button.addEventListener('click', () => moveGroupClass(Number(button.dataset.orderDown), 1)));
+    content.querySelectorAll('[data-detach-shared-sheet]').forEach(button => button.addEventListener('click', () => {
+      const sheet = state.sheetDefinitions.find(item => item.id === button.dataset.detachSharedSheet);
+      if (!sheet) return;
+      const warning = `「${sheet.name}」の合同共有を解除します。\n\n名簿・記録・締切日は、それぞれのクラス専用シートとして残ります。元の共有状態に自動では戻せません。\n\n必要な場合は、解除前にバックアップを保存し、「設定 → クラス設定 → バックアップから復元」を使ってください。\n\n解除しますか？`;
+      if (!root.confirm(warning)) return;
+      const message = content.querySelector('.settings-message');
+      try {
+        const next = W.detachSheetFromGroup(state, { sheetId: sheet.id });
+        adapter.updateState(next);
+        beginGroup(next, groupDraft.id);
+        renderSection();
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    }));
     content.querySelector('.group-editor').addEventListener('submit', event => saveGroup(event, state));
     content.querySelector('[data-delete-group]')?.addEventListener('click', () => { const message=content.querySelector('.settings-message');try{const next=W.deleteGroup(state,groupDraft.id);adapter.updateState(next);groupDraft=null;renderSection()}catch(error){message.textContent=error.message} });
   }
@@ -221,52 +238,15 @@
     content.querySelectorAll('[data-restore-sheet]').forEach(button => button.addEventListener('click', () => { adapter.updateState(W.restoreSheet(state, button.dataset.restoreSheet));renderSection(); }));
   }
 
-  function paletteName(kind) {
-    return kind === 'submission' ? '提出物' : kind === 'activity' ? '活動評価' : '点数記録';
-  }
-
-  function ensurePaletteDrafts(state) {
-    if (paletteDrafts) return;
-    paletteDrafts = Object.fromEntries(['submission','activity','numeric'].map(kind => [kind, P.paletteForSheet(state.preferences, kind)]));
-  }
-
-  function capturePaletteDrafts() {
-    if (!paletteDrafts) return;
-    mountPoint.querySelectorAll('[data-palette-kind]').forEach(section => {
-      const kind = section.dataset.paletteKind;
-      section.querySelectorAll('[data-palette-row]').forEach((row, index) => { paletteDrafts[kind][index].visible = row.querySelector('[data-palette-visible]').checked; });
-    });
-  }
-
-  function movePalette(kind, index, offset) {
-    capturePaletteDrafts();
-    const target = index + offset;
-    if (target < 0 || target >= paletteDrafts[kind].length) return;
-    [paletteDrafts[kind][index], paletteDrafts[kind][target]] = [paletteDrafts[kind][target], paletteDrafts[kind][index]];
-    renderSection();
-  }
-
   function renderPalette(content, state) {
-    ensurePaletteDrafts(state);
-    const panels = ['submission','activity','numeric'].map(kind => {
-      const rows = paletteDrafts[kind].map((entry, index) => `<li data-palette-row><span class="palette-swatch mark-${escapeHtml(P.colorTokenForMark(entry.value))}" data-palette-value>${escapeHtml(entry.value)}</span><label><input type="checkbox" data-palette-visible ${entry.visible ? 'checked' : ''}>表示</label><span><button type="button" data-palette-up="${index}" aria-label="${escapeHtml(entry.value)}を上へ" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-palette-down="${index}" aria-label="${escapeHtml(entry.value)}を下へ" ${index === paletteDrafts[kind].length - 1 ? 'disabled' : ''}>↓</button></span></li>`).join('');
-      return `<section class="palette-settings" data-palette-kind="${kind}"><div><h3>${paletteName(kind)}</h3><button type="button" data-load-preset="${kind}">${paletteName(kind)}プリセットを読み込む</button></div><ol>${rows}</ol></section>`;
-    }).join('');
-    content.innerHTML = `<div class="settings-section-heading"><div><h2>パレット設定</h2><p>表示するボタンと順番を、この端末の基本として保存します。色は意味がずれないよう固定されています。</p></div></div><div class="palette-settings-grid">${panels}</div><p class="settings-message" role="status"></p><button type="button" class="primary settings-save-wide" data-save-palettes>この端末の基本パレットとして保存</button>`;
-    content.querySelectorAll('[data-load-preset]').forEach(button => button.addEventListener('click', () => { paletteDrafts[button.dataset.loadPreset] = P.PRESETS[button.dataset.loadPreset].map(value => ({ value, visible:true }));renderSection(); }));
-    content.querySelectorAll('[data-palette-kind]').forEach(section => {
-      const kind = section.dataset.paletteKind;
-      section.querySelectorAll('[data-palette-up]').forEach(button => button.addEventListener('click', () => movePalette(kind, Number(button.dataset.paletteUp), -1)));
-      section.querySelectorAll('[data-palette-down]').forEach(button => button.addEventListener('click', () => movePalette(kind, Number(button.dataset.paletteDown), 1)));
-    });
-    content.querySelector('[data-save-palettes]').addEventListener('click', () => {
-      capturePaletteDrafts();
-      const next = W.migrateWorkspace(state);
-      let preferences = next.preferences;
-      for (const kind of ['submission','activity','numeric']) preferences = P.setPaletteDefault(preferences, kind, paletteDrafts[kind]);
-      next.preferences = preferences;
-      adapter.updateState(W.validateWorkspace(next));
-      content.querySelector('.settings-message').textContent = 'この端末の基本パレットとして保存しました。';
+    content.innerHTML = `<div class="settings-section-heading palette-heading"><div><h2>パレット設定</h2><p>名前、表示文字、色、大きさを自由に設定できます。必要なパレットだけ点数と連動できます。</p></div></div><div data-palette-settings-root></div>`;
+    PaletteSettings.mount(content.querySelector('[data-palette-settings-root]'), {
+      getPreferences: () => adapter.getState().preferences,
+      savePreferences: preferences => {
+        const next = W.migrateWorkspace(adapter.getState());
+        next.preferences = P.validatePreferences(preferences);
+        adapter.updateState(W.validateWorkspace(next));
+      }
     });
   }
 

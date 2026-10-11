@@ -1,6 +1,6 @@
 (function (root) {
   const APP_ID = 'TSUKERU';
-  const SCHEMA_VERSION = 2;
+  const SCHEMA_VERSION = 3;
 
   class WorkspaceValidationError extends Error {
     constructor(message) {
@@ -11,6 +11,27 @@
 
   function fail(message) {
     throw new WorkspaceValidationError(message);
+  }
+
+  function paletteApi() {
+    if (!root.TSUKERUPalette) fail('パレット設定を読み込めません');
+    return root.TSUKERUPalette;
+  }
+
+  function normalizePreferences(preferences, options = {}) {
+    try {
+      return paletteApi().normalizePreferences(preferences, options);
+    } catch (error) {
+      fail(error && error.message ? error.message : 'パレット設定が不正です');
+    }
+  }
+
+  function validatePreferences(preferences) {
+    try {
+      paletteApi().validatePreferences(preferences);
+    } catch (error) {
+      fail(error && error.message ? error.message : 'パレット設定が不正です');
+    }
   }
 
   function clone(value) {
@@ -33,9 +54,11 @@
     if (typeof value !== 'number' || !Number.isFinite(value)) fail(`${label}が不正です`);
   }
 
+  const SAFE_ID_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._:-]{0,127}$/u;
+
   function requireUnique(items, label) {
     const ids = items.map(item => item && item.id);
-    if (ids.some(id => typeof id !== 'string' || !id)) fail(`${label}がありません`);
+    if (ids.some(id => typeof id !== 'string' || !SAFE_ID_PATTERN.test(id))) fail(`${label}が不正です`);
     if (new Set(ids).size !== ids.length) fail(`${label}が重複しています`);
   }
 
@@ -71,7 +94,7 @@
       groups: [],
       sheetDefinitions: [],
       classRecords: {},
-      preferences: { paletteDefaults: {} },
+      preferences: normalizePreferences({}, { nowIso }),
       ui: defaultUi()
     };
   }
@@ -106,6 +129,12 @@
     for (const field of ['base', 'interval', 'penalty', 'redoPenalty', 'zeroDays']) requireFinite(column[field], '評価列の数値設定');
     if (!['days', 'lesson', 'none'].includes(column.basis)) fail('評価列の減点方式が不正です');
     if (typeof column.zeroFloor !== 'boolean' || typeof column.includeInTotal !== 'boolean' || typeof column.hidden !== 'boolean') fail('評価列の設定が不正です');
+    if (!(column.inputMethod === null || ['cycle', 'direct', 'number'].includes(column.inputMethod))) fail('評価列の入力方法が不正です');
+    try {
+      paletteApi().validateSnapshot(column.paletteSnapshot);
+    } catch (error) {
+      fail(error && error.message ? error.message : '列のパレット設定が不正です');
+    }
   }
 
   function validateRecordObject(records, allowedKeys, label, validateValue) {
@@ -130,7 +159,7 @@
     if (!Array.isArray(state.classes) || !Array.isArray(state.groups) || !Array.isArray(state.sheetDefinitions)) fail('保存データの一覧が不正です');
     requireObject(state.classRecords, 'クラス別記録');
     requireObject(state.preferences, 'ユーザー設定');
-    requireObject(state.preferences.paletteDefaults, 'パレット設定');
+    validatePreferences(state.preferences);
     requireObject(state.ui, '画面状態');
 
     requireUnique(state.classes, '学級ID');
@@ -217,7 +246,9 @@
         const columns = clone(legacySheet.columns || []).map(column => ({
           ...column,
           includeInTotal: column.includeInTotal === undefined ? true : column.includeInTotal,
-          hidden: column.hidden === undefined ? false : column.hidden
+          hidden: column.hidden === undefined ? false : column.hidden,
+          paletteSnapshot: paletteApi().paletteForColumn(state.preferences, legacySheet.type, column),
+          inputMethod: null
         }));
         const dueDates = Object.fromEntries(columns.map(column => [column.id, column.due || '']));
         state.sheetDefinitions.push({
@@ -253,13 +284,12 @@
     return validateWorkspace(state);
   }
 
-  function normalizeV2(raw) {
+  function normalizeV3(raw) {
     const state = clone(raw);
     state.groups = Array.isArray(state.groups) ? state.groups : [];
     state.sheetDefinitions = Array.isArray(state.sheetDefinitions) ? state.sheetDefinitions : [];
     state.classRecords = isObject(state.classRecords) ? state.classRecords : {};
-    state.preferences = isObject(state.preferences) ? state.preferences : { paletteDefaults: {} };
-    state.preferences.paletteDefaults = isObject(state.preferences.paletteDefaults) ? state.preferences.paletteDefaults : {};
+    state.preferences = isObject(state.preferences) ? state.preferences : {};
     state.ui = { ...defaultUi(), ...(isObject(state.ui) ? state.ui : {}) };
     for (const sheet of state.sheetDefinitions) {
       if (!isObject(sheet.dueDatesByClass)) sheet.dueDatesByClass = {};
@@ -275,13 +305,44 @@
     return validateWorkspace(state);
   }
 
+  function migrateV2(raw) {
+    const state = clone(raw);
+    state.schemaVersion = SCHEMA_VERSION;
+    state.groups = Array.isArray(state.groups) ? state.groups : [];
+    state.sheetDefinitions = Array.isArray(state.sheetDefinitions) ? state.sheetDefinitions : [];
+    state.classRecords = isObject(state.classRecords) ? state.classRecords : {};
+    state.preferences = normalizePreferences(isObject(state.preferences) ? state.preferences : {}, {
+      nowIso: validIsoDate(state.savedAt) ? state.savedAt : new Date().toISOString()
+    });
+    state.ui = { ...defaultUi(), ...(isObject(state.ui) ? state.ui : {}) };
+    for (const sheet of state.sheetDefinitions) {
+      if (!isObject(sheet.dueDatesByClass)) sheet.dueDatesByClass = {};
+      if (sheet.archivedAt === undefined) sheet.archivedAt = null;
+      if (sheet.archivedScope === undefined) sheet.archivedScope = null;
+      if (Array.isArray(sheet.columns)) {
+        for (const column of sheet.columns) {
+          if (column.includeInTotal === undefined) column.includeInTotal = true;
+          if (column.hidden === undefined) column.hidden = false;
+          column.paletteSnapshot = paletteApi().paletteForColumn(state.preferences, sheet.type, column);
+          column.inputMethod = ['cycle', 'direct', 'number'].includes(column.inputMethod) ? column.inputMethod : null;
+        }
+      }
+    }
+    return validateWorkspace(state);
+  }
+
+  function validIsoDate(value) {
+    return typeof value === 'string' && !Number.isNaN(Date.parse(value));
+  }
+
   function migrateWorkspace(rawState) {
     if (!isObject(rawState)) fail('保存データを読み取れません');
     if (rawState.appId !== APP_ID) fail('TSUKERUの保存データではありません');
     const version = Number(rawState.schemaVersion);
     if (version > SCHEMA_VERSION) fail('このアプリより新しい形式の保存データです');
-    if (version === SCHEMA_VERSION && Array.isArray(rawState.sheetDefinitions)) return normalizeV2(rawState);
-    if (version === 1 || (version === SCHEMA_VERSION && Array.isArray(rawState.classes))) return migrateLegacy(clone(rawState));
+    if (version === SCHEMA_VERSION && Array.isArray(rawState.sheetDefinitions)) return normalizeV3(rawState);
+    if (version === 2 && Array.isArray(rawState.sheetDefinitions)) return migrateV2(rawState);
+    if (version === 1 || (version === 2 && Array.isArray(rawState.classes))) return migrateLegacy(clone(rawState));
     fail('対応していない古い保存形式です');
   }
 
@@ -292,6 +353,28 @@
       if (!includeArchived && sheet.archivedAt) return false;
       return sheetAppliesToClass(state, sheet, classId);
     });
+  }
+
+  function sheetsForGroup(state, groupId, { includeArchived = false } = {}) {
+    if (!state?.groups?.some(group => group.id === groupId)) return [];
+    return (state.sheetDefinitions || []).filter(sheet => (
+      sheet.scope.type === 'group'
+      && sheet.scope.groupId === groupId
+      && (includeArchived || !sheet.archivedAt)
+    ));
+  }
+
+  function dueSummaryForColumn(state, sheetId, columnId) {
+    const sheet = state?.sheetDefinitions?.find(item => item.id === sheetId);
+    if (!sheet) fail('チェック表が見つかりません');
+    const column = sheet.columns.find(item => item.id === columnId);
+    if (!column) fail('評価列が見つかりません');
+    const values = classIdsForScope(state, sheet.scope).map(classId => (
+      sheet.dueDatesByClass[classId]?.[columnId] ?? column.due ?? ''
+    ));
+    if (values.every(value => !value)) return { kind: 'none', value: '' };
+    if (new Set(values).size === 1) return { kind: 'same', value: values[0] };
+    return { kind: 'mixed', value: '' };
   }
 
   function ensureClassRecord(state, classId, sheetId) {
@@ -348,6 +431,47 @@
       ]));
       ensureClassRecord(next, classId, sheetId);
     }
+    return validateWorkspace(next);
+  }
+
+  function detachSheetFromGroup(state, { sheetId, idFactory = defaultIdFactory }) {
+    const next = migrateWorkspace(state);
+    const sheetIndex = next.sheetDefinitions.findIndex(item => item.id === sheetId);
+    const sheet = next.sheetDefinitions[sheetIndex];
+    if (!sheet || sheet.archivedAt || sheet.scope.type !== 'group') fail('共有を解除するチェック表が見つかりません');
+    const group = next.groups.find(item => item.id === sheet.scope.groupId);
+    if (!group) fail('合同グループが見つかりません');
+
+    const usedIds = new Set(next.sheetDefinitions.map(item => item.id));
+    const replacements = group.classIds.map((classId, index) => {
+      const id = index === 0 ? sheet.id : idFactory('sheet');
+      if (typeof id !== 'string' || !SAFE_ID_PATTERN.test(id) || (index > 0 && usedIds.has(id))) fail('チェック表IDが不正または重複しています');
+      usedIds.add(id);
+      const dates = isObject(sheet.dueDatesByClass[classId]) ? clone(sheet.dueDatesByClass[classId]) : {};
+      return {
+        ...clone(sheet), id,
+        scope: { type: 'class', classId },
+        columns: sheet.columns.map(column => ({ ...clone(column), due: dates[column.id] ?? column.due ?? '' })),
+        dueDatesByClass: { [classId]: dates },
+        archivedAt: null,
+        archivedScope: null
+      };
+    });
+
+    const buckets = group.classIds.map(classId => clone(next.classRecords[classId]?.[sheet.id] || { values: {}, meta: {} }));
+    next.sheetDefinitions.splice(sheetIndex, 1, ...replacements);
+    group.classIds.forEach((classId, index) => {
+      const replacementId = replacements[index].id;
+      const bucket = buckets[index];
+      if (replacementId !== sheet.id) {
+        next.classRecords[classId][replacementId] = bucket;
+        delete next.classRecords[classId][sheet.id];
+      }
+    });
+    const currentReplacement = replacements.find(item => item.scope.classId === next.ui.currentClassId) || replacements[0];
+    if (next.ui.currentSheetId === sheet.id) next.ui.currentSheetId = currentReplacement.id;
+    if (next.ui.currentGroupId === group.id) next.ui.currentGroupId = null;
+    next.ui.recordMode = 'class';
     return validateWorkspace(next);
   }
 
@@ -463,13 +587,24 @@
     fail('チェック表の利用対象が不正です');
   }
 
-  function normalizedColumn(column, idFactory) {
+  function normalizedColumn(column, idFactory, sheetType, preferences) {
     const id = typeof column.id === 'string' && column.id ? column.id : idFactory('column');
+    let paletteSnapshot;
+    try {
+      paletteSnapshot = column.paletteSnapshot
+        ? paletteApi().validateSnapshot(column.paletteSnapshot)
+        : paletteApi().paletteForColumn(preferences, sheetType, column);
+    } catch (error) {
+      fail(error && error.message ? error.message : '列のパレット設定が不正です');
+    }
+    const paletteMaximum = paletteApi().maxPaletteScore(paletteSnapshot);
     return {
       id,
       title: String(column.title || '').trim(),
       due: validDate(column.due) ? column.due : '',
-      base: Number.isFinite(Number(column.base)) ? Number(column.base) : 0,
+      base: paletteMaximum === null
+        ? (Number.isFinite(Number(column.base)) ? Number(column.base) : 0)
+        : paletteMaximum,
       interval: Number.isFinite(Number(column.interval)) ? Math.max(1, Number(column.interval)) : 3,
       penalty: Number.isFinite(Number(column.penalty)) ? Math.max(0, Number(column.penalty)) : 1,
       basis: ['days', 'lesson', 'none'].includes(column.basis) ? column.basis : 'days',
@@ -477,7 +612,9 @@
       zeroDays: Number.isFinite(Number(column.zeroDays)) ? Math.max(1, Number(column.zeroDays)) : 30,
       zeroFloor: column.zeroFloor === undefined ? true : Boolean(column.zeroFloor),
       includeInTotal: column.includeInTotal === undefined ? true : Boolean(column.includeInTotal),
-      hidden: column.hidden === undefined ? false : Boolean(column.hidden)
+      hidden: column.hidden === undefined ? false : Boolean(column.hidden),
+      paletteSnapshot,
+      inputMethod: ['cycle', 'direct', 'number'].includes(column.inputMethod) ? column.inputMethod : null
     };
   }
 
@@ -495,7 +632,7 @@
     requireString(name, 'チェック表名', { allowEmpty: false });
     if (!['submission', 'evaluation', 'number'].includes(type)) fail('チェック表の種類が不正です');
     if (!Array.isArray(columns) || !columns.length) fail('評価列データが不正です');
-    const normalizedColumns = columns.map(column => normalizedColumn(column, idFactory));
+    const normalizedColumns = columns.map(column => normalizedColumn(column, idFactory, type, next.preferences));
     const id = idFactory('sheet');
     const dates = normalizeDueDates(classIds, normalizedColumns, dueDatesByClass);
     normalizedColumns.forEach(column => { column.due = dates[classIds[0]][column.id] || ''; });
@@ -518,7 +655,7 @@
     if (!['submission', 'evaluation', 'number'].includes(type)) fail('チェック表の種類が不正です');
     if (!Array.isArray(columns) || !columns.length) fail('評価列データが不正です');
     const oldColumnIds = new Set(sheet.columns.map(column => column.id));
-    const normalizedColumns = columns.map(column => normalizedColumn(column, defaultIdFactory));
+    const normalizedColumns = columns.map(column => normalizedColumn(column, defaultIdFactory, type, next.preferences));
     const nextColumnIds = new Set(normalizedColumns.map(column => column.id));
     const removed = [...oldColumnIds].filter(id => !nextColumnIds.has(id));
     if (removed.length) {
@@ -584,8 +721,8 @@
   root.TSUKERUWorkspace = Object.freeze({
     APP_ID, SCHEMA_VERSION, WorkspaceValidationError,
     createEmptyWorkspace, migrateWorkspace, validateWorkspace,
-    ensureClassRecord, availableSheetsForClass,
-    createGroup, updateGroup, promoteSheetToGroup, rowsForSheet,
+    ensureClassRecord, availableSheetsForClass, sheetsForGroup, dueSummaryForColumn,
+    createGroup, updateGroup, promoteSheetToGroup, detachSheetFromGroup, rowsForSheet,
     removeClassFromGroup, deleteGroup, createSheetDefinition, updateSheetDefinition,
     archiveSheet, restoreSheet, resetAcademicData, academicDataSummary
   });

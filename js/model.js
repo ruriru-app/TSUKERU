@@ -1,6 +1,6 @@
 (function (root) {
   const APP_ID = 'TSUKERU';
-  const SCHEMA_VERSION = 2;
+  const SCHEMA_VERSION = 3;
   const DEMO_NAMES = ['小鳥遊 美咲','四月一日 陽菜','月見里 悠真','佐藤 結衣','田中 陽翔','青木 はる','伊藤 そうた','加藤 みお','山田 けん','中村 あい','渡辺 さき','森川 りお'];
   const DEMO_KANA = ['たかなし みさき','わたぬき ひな','やまなし ゆうま','さとう ゆい','たなか はると','あおき はる','いとう そうた','かとう みお','やまだ けん','なかむら あい','わたなべ さき','もりかわ りお'];
 
@@ -79,7 +79,7 @@
     const workspace = root.TSUKERUWorkspace;
     if (!workspace) throw new Error('TSUKERUの保存形式を読み込めません');
     const state = workspace.migrateWorkspace(raw);
-    if (root.TSUKERUPalette) state.preferences = root.TSUKERUPalette.normalizePaletteDefaults(state.preferences);
+    if (root.TSUKERUPalette) state.preferences = root.TSUKERUPalette.normalizePreferences(state.preferences);
     return attachLegacyViews(state);
   }
 
