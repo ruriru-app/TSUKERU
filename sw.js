@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tsukeru-shell-v10';
+const CACHE_NAME = 'tsukeru-shell-v11';
 const CACHE_PREFIX = 'tsukeru-shell-';
 const APP_SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest',

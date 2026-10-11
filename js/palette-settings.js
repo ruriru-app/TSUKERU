@@ -6,6 +6,10 @@
     teal: 'ティール', indigo: 'インディゴ', slate: 'スレート', cream: 'クリーム'
   });
   const SIZE_NAMES = Object.freeze({ small: '小', standard: '標準', large: '大' });
+  const ACTION_NAMES = Object.freeze({
+    mark: '通常入力', date: '日付', redo: '再提出', batchReturn: '再提出分を返却',
+    fillCircle: '残りを○', fillCross: '残りを×', fillA: '残りをA', fillC: '残りをC'
+  });
 
   const clone = value => structuredClone(value);
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -14,11 +18,12 @@
 
   function draftEntry(index, input = {}) {
     return {
-      id: typeof input.id === 'string' ? input.id : `entry-draft-${index + 1}`,
+      id: typeof input.id === 'string' && input.id ? input.id : `entry-draft-${index + 1}`,
       label: typeof input.label === 'string' ? input.label : '',
       color: P.ALLOWED_COLORS.includes(input.color) ? input.color : P.ALLOWED_COLORS[index % P.ALLOWED_COLORS.length],
       score: input.score ?? null,
       action: P.ENTRY_ACTIONS.includes(input.action) ? input.action : 'mark',
+      slotSpan: Number(input.slotSpan) === 2 ? 2 : 1,
       visible: input.visible === undefined ? true : Boolean(input.visible)
     };
   }
@@ -40,7 +45,7 @@
       scoringEnabled: Boolean(source.scoringEnabled),
       entries: (source.entries || []).map((entry, index) => draftEntry(index, {
         ...entry,
-        id: isPreset ? '' : entry.id
+        id: isPreset ? `entry-draft-${index + 1}` : entry.id
       })),
       preset: null,
       createdAt: isPreset ? nowIso : source.createdAt,
@@ -66,7 +71,10 @@
 
   function addEntry(draft, input = {}) {
     const next = clone(draft);
-    next.entries.push(draftEntry(next.entries.length, input));
+    const ids = new Set(next.entries.map(entry => entry.id));
+    let counter = next.entries.length + 1;
+    while (ids.has(`entry-draft-${counter}`)) counter += 1;
+    next.entries.push(draftEntry(counter - 1, { ...input, id: input.id || `entry-draft-${counter}` }));
     return next;
   }
 
@@ -101,9 +109,11 @@
         score = null;
       }
       if (!P.ENTRY_ACTIONS.includes(entry.action)) errors.push({ field: 'action', row, message: 'ボタンの動作が不正です' });
+      const slotSpan = Number(entry.slotSpan);
+      if (!(slotSpan === 1 || slotSpan === 2)) errors.push({ field: 'slotSpan', row, message: 'ボタンの幅は1または2を選んでください' });
       return {
         id: typeof entry.id === 'string' && entry.id ? entry.id : `palette-draft-entry-${row + 1}`,
-        label, color: entry.color, score, action: entry.action,
+        label, color: entry.color, score, action: entry.action, slotSpan,
         visible: entry.visible === undefined ? true : Boolean(entry.visible)
       };
     }) : [];
@@ -149,15 +159,56 @@
         .map(([kind]) => labels[kind]);
     }
 
+    function captureUiState() {
+      const editor = rootElement.querySelector('.palette-editor');
+      const library = rootElement.querySelector('.palette-library-scroll');
+      const activeElement = rootElement.ownerDocument.activeElement;
+      let focus = null;
+      if (activeElement && rootElement.contains(activeElement)) {
+        const dataAttribute = [...activeElement.attributes].find(attribute => attribute.name.startsWith('data-'));
+        const row = activeElement.closest('[data-palette-entry-id]');
+        focus = dataAttribute ? {
+          attribute: dataAttribute.name,
+          entryId: row?.dataset.paletteEntryId || null,
+          selectionStart: typeof activeElement.selectionStart === 'number' ? activeElement.selectionStart : null,
+          selectionEnd: typeof activeElement.selectionEnd === 'number' ? activeElement.selectionEnd : null
+        } : null;
+      }
+      return {
+        editorScrollTop: editor?.scrollTop || 0,
+        libraryScrollTop: library?.scrollTop || 0,
+        focus
+      };
+    }
+
+    function restoreUiState(state) {
+      if (!state) return;
+      const editor = rootElement.querySelector('.palette-editor');
+      const library = rootElement.querySelector('.palette-library-scroll');
+      if (state.focus) {
+        const scope = state.focus.entryId
+          ? rootElement.querySelector(`[data-palette-entry-id="${state.focus.entryId}"]`)
+          : rootElement;
+        const target = scope?.querySelector(`[${state.focus.attribute}]`);
+        if (target) {
+          target.focus({ preventScroll: true });
+          if (state.focus.selectionStart !== null && typeof target.setSelectionRange === 'function') {
+            target.setSelectionRange(state.focus.selectionStart, state.focus.selectionEnd);
+          }
+        }
+      }
+      if (editor) editor.scrollTop = state.editorScrollTop;
+      if (library) library.scrollTop = state.libraryScrollTop;
+    }
+
     function renderPreview() {
       const preview = rootElement.querySelector('[data-palette-preview-buttons]');
       if (!preview) return;
+      const layout = P.paletteLayout(draft);
       preview.className = `palette-preview-buttons palette-size-${draft.size}`;
-      preview.innerHTML = draft.entries.filter(entry => entry.visible !== false).map(entry => {
-        const score = draft.scoringEnabled && entry.score !== '' && entry.score !== null && entry.score !== undefined
-          ? `<small>${escapeHtml(entry.score)}点</small>` : '';
-        return `<button type="button" data-palette-color="${escapeHtml(entry.color)}"><span>${escapeHtml(entry.label || '文字')}</span>${score}</button>`;
-      }).join('') || '<p class="settings-empty">表示するボタンがありません。</p>';
+      preview.dataset.paletteColumns = String(layout.columns);
+      preview.style.setProperty('--palette-columns', String(layout.columns));
+      preview.innerHTML = layout.buttons.map(button => `<button type="button" data-palette-color="${escapeHtml(button.entry.color)}" style="grid-row:${button.row};grid-column:${button.column}/span ${button.slotSpan}"><span>${escapeHtml(button.entry.label || '文字')}</span></button>`).join('') || '<p class="settings-empty">表示するボタンがありません。</p>';
     }
 
     function captureSimpleFields() {
@@ -172,6 +223,7 @@
     }
 
     function render() {
+      const uiState = captureUiState();
       const list = preferences.palettes.map(palette => {
         const badges = defaultBadges(palette.id);
         return `<article class="palette-library-item ${selectedId === palette.id ? 'selected' : ''}">
@@ -192,9 +244,11 @@
         messages.push(error.message);rowErrors.set(error.row, messages);
       });
       const fieldErrors = errors.filter(error => !Number.isInteger(error.row)).map(error => error.message);
-      const entryRows = draft.entries.map((entry, index) => `<div class="palette-entry-row" data-palette-entry="${index}">
+      const entryRows = draft.entries.map((entry, index) => `<div class="palette-entry-row" data-palette-entry="${index}" data-palette-entry-id="${escapeHtml(entry.id || `draft-${index}`)}">
         <label>文字<input data-entry-label value="${escapeHtml(entry.label)}" maxlength="12"></label>
         <label>色<select data-entry-color>${P.ALLOWED_COLORS.map(color => `<option value="${color}" ${entry.color === color ? 'selected' : ''}>${COLOR_NAMES[color]}</option>`).join('')}</select></label>
+        <label>動作<select data-entry-action>${P.ENTRY_ACTIONS.map(action => `<option value="${action}" ${entry.action === action ? 'selected' : ''}>${ACTION_NAMES[action]}</option>`).join('')}</select></label>
+        <label>幅<select data-entry-slot-span><option value="1" ${Number(entry.slotSpan) !== 2 ? 'selected' : ''}>1スロット</option><option value="2" ${Number(entry.slotSpan) === 2 ? 'selected' : ''}>2スロット</option></select></label>
         ${draft.scoringEnabled ? `<label>点数<input data-entry-score inputmode="decimal" value="${entry.score ?? ''}" placeholder="空欄"></label>` : ''}
         <label class="palette-visible-check"><input type="checkbox" data-entry-visible ${entry.visible !== false ? 'checked' : ''}>表示</label>
         <div class="palette-row-actions"><button type="button" data-entry-up="${index}" aria-label="上へ" ${index === 0 ? 'disabled' : ''}>↑</button><button type="button" data-entry-down="${index}" aria-label="下へ" ${index === draft.entries.length - 1 ? 'disabled' : ''}>↓</button><button type="button" data-entry-remove="${index}" aria-label="削除" ${draft.entries.length === 1 ? 'disabled' : ''}>×</button></div>
@@ -206,7 +260,7 @@
           <div class="palette-library-scroll">${list}</div>
         </section>
         <section class="palette-workbench">
-          <div class="palette-preview"><div><h3>プレビュー</h3><span>${escapeHtml(SIZE_NAMES[draft.size] || '標準')}</span></div><div data-palette-preview-buttons></div></div>
+          <div class="palette-preview"><div><h3>プレビュー</h3><span>${escapeHtml(SIZE_NAMES[draft.size] || '標準')}</span></div><div class="palette-preview-shell"><div class="drag"><span>⠿ 入力パレット</span><button type="button" aria-label="折りたたむ">−</button></div><div data-palette-preview-buttons></div></div></div>
           <form class="palette-editor">
             <div class="palette-editor-heading"><div><h3>${selectedId ? 'パレットを編集' : 'パレットを作成'}</h3><p>${preferences.palettes.find(item => item.id === selectedId)?.preset ? 'プリセットは複製して保存されます。' : '列へ適用した内容は、その列にコピーして保持されます。'}</p></div><button type="submit" class="primary">パレットを保存</button></div>
             <div class="palette-editor-basics">
@@ -257,6 +311,8 @@
         const index = Number(row.dataset.paletteEntry);
         row.querySelector('[data-entry-label]').addEventListener('input', event => { draft.entries[index].label = event.target.value;renderPreview(); });
         row.querySelector('[data-entry-color]').addEventListener('change', event => { draft.entries[index].color = event.target.value;renderPreview(); });
+        row.querySelector('[data-entry-action]').addEventListener('change', event => { draft.entries[index].action = event.target.value;renderPreview(); });
+        row.querySelector('[data-entry-slot-span]').addEventListener('change', event => { draft.entries[index].slotSpan = Number(event.target.value);renderPreview(); });
         row.querySelector('[data-entry-score]')?.addEventListener('input', event => { draft.entries[index].score = event.target.value;renderPreview(); });
         row.querySelector('[data-entry-visible]').addEventListener('change', event => { draft.entries[index].visible = event.target.checked;renderPreview(); });
       });
@@ -288,6 +344,7 @@
           errors = [{ field: 'palette', message: error.message }];notice = '';render();
         }
       });
+      restoreUiState(uiState);
     }
 
     render();
@@ -295,7 +352,7 @@
   }
 
   root.TSUKERUPaletteSettings = Object.freeze({
-    COLOR_NAMES, SIZE_NAMES, createDraft, editorViewModel, moveEntry, addEntry, removeEntry,
+    COLOR_NAMES, SIZE_NAMES, ACTION_NAMES, createDraft, editorViewModel, moveEntry, addEntry, removeEntry,
     validateDraft, mount
   });
 })(globalThis);

@@ -177,6 +177,10 @@
   }
 
   function scoreRecord({ sheetType, column, value, meta, schedule, today }) {
+    if (sheetType === 'number' && column?.inputMethod === 'number') {
+      if (!value || value === '欠' || value === '再') return null;
+      return Number.isNaN(Number(value)) ? null : Number(value);
+    }
     if (column && column.paletteSnapshot && column.paletteSnapshot.scoringEnabled && root.TSUKERUPalette) {
       const linked = root.TSUKERUPalette.scoreForValue(column.paletteSnapshot, value);
       return linked.matched ? linked.score : null;

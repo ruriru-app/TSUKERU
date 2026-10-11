@@ -13,11 +13,15 @@
     'rose', 'sage', 'sky', 'stone', 'lilac', 'amber',
     'mint', 'peach', 'teal', 'indigo', 'slate', 'cream'
   ]);
-  const ENTRY_ACTIONS = Object.freeze(['mark', 'date', 'redo', 'batchReturn']);
+  const ENTRY_ACTIONS = Object.freeze([
+    'mark', 'date', 'redo', 'batchReturn',
+    'fillCircle', 'fillCross', 'fillA', 'fillC'
+  ]);
   const BUILTIN_IDS = Object.freeze({
     submission: 'palette-preset-submission',
     activity: 'palette-preset-activity',
-    numeric: 'palette-preset-numeric'
+    numeric: 'palette-preset-numeric',
+    numericMax30: 'palette-preset-numeric-max30'
   });
   const BUILTIN_DATE = '2026-01-01T00:00:00.000Z';
   const BUILTIN_SETTINGS = Object.freeze({
@@ -25,18 +29,24 @@
       name: '提出物',
       entries: Object.freeze([
         ['○', 'rose', 'mark'], ['×', 'sky', 'mark'], ['欠', 'stone', 'mark'],
-        ['再', 'lilac', 'redo'], ['日付', 'amber', 'date'], ['再返', 'lilac', 'batchReturn']
+        ['再', 'lilac', 'redo'], ['日付', 'amber', 'date'], ['再返', 'lilac', 'batchReturn'],
+        ['残りを○', 'cream', 'fillCircle', 2], ['残りを×', 'cream', 'fillCross', 2]
       ])
     }),
     activity: Object.freeze({
       name: '活動評価',
       entries: Object.freeze([
-        ['A', 'rose', 'mark'], ['B', 'sage', 'mark'], ['C', 'sky', 'mark'], ['欠', 'stone', 'mark']
+        ['A', 'rose', 'mark'], ['B', 'sage', 'mark'], ['C', 'sky', 'mark'], ['欠', 'stone', 'mark'],
+        ['残りをA', 'cream', 'fillA', 2], ['残りをC', 'cream', 'fillC', 2]
       ])
     }),
     numeric: Object.freeze({
       name: '数値',
       entries: Object.freeze(PRESETS.numeric.map(label => [label, 'cream', 'mark']))
+    }),
+    numericMax30: Object.freeze({
+      name: '5点刻み Max30', scoringEnabled: true,
+      entries: Object.freeze(['0', '5', '10', '15', '20', '25', '30'].map(label => [label, 'teal', 'mark', 1, Number(label)]))
     })
   });
 
@@ -66,17 +76,17 @@
   function makeBuiltinPalette(key) {
     const settings = BUILTIN_SETTINGS[key];
     return {
-      id: BUILTIN_IDS[key], name: settings.name, size: 'standard', scoringEnabled: false,
-      entries: settings.entries.map(([label, color, action], index) => ({
+      id: BUILTIN_IDS[key], name: settings.name, size: 'standard', scoringEnabled: settings.scoringEnabled === true,
+      entries: settings.entries.map(([label, color, action, slotSpan = 1, score = null], index) => ({
         id: `${BUILTIN_IDS[key]}-entry-${index + 1}`,
-        label, color, score: null, action, visible: true
+        label, color, score, action, slotSpan, visible: true
       })),
       preset: key, createdAt: BUILTIN_DATE, updatedAt: BUILTIN_DATE
     };
   }
 
   function builtinPalettes() {
-    return Object.keys(PRESETS).map(makeBuiltinPalette);
+    return Object.keys(BUILTIN_SETTINGS).map(makeBuiltinPalette);
   }
 
   function normalizeEntry(entry, index, paletteId) {
@@ -89,11 +99,13 @@
     if (!(score === null || (typeof score === 'number' && Number.isFinite(score)))) throw new TypeError('パレットの点数が不正です');
     const action = entry.action === undefined ? 'mark' : entry.action;
     if (!ENTRY_ACTIONS.includes(action)) throw new TypeError('パレットの動作が不正です');
+    const slotSpan = entry.slotSpan === undefined ? 1 : Number(entry.slotSpan);
+    if (!(slotSpan === 1 || slotSpan === 2)) throw new TypeError('パレットボタンの幅が不正です');
     const id = typeof entry.id === 'string' && entry.id.trim()
       ? entry.id.trim()
       : `${paletteId}-entry-${index + 1}`;
     return {
-      id, label, color, score, action,
+      id, label, color, score, action, slotSpan,
       visible: entry.visible === undefined ? true : Boolean(entry.visible)
     };
   }
@@ -107,7 +119,7 @@
     if (!PALETTE_SIZES.includes(palette.size)) throw new TypeError('パレットの表示サイズが不正です');
     if (typeof palette.scoringEnabled !== 'boolean') throw new TypeError('パレットの点数設定が不正です');
     if (!Array.isArray(palette.entries) || palette.entries.length === 0 || palette.entries.length > 30) throw new TypeError('パレット項目が不正です');
-    if (!(palette.preset === null || Object.keys(PRESETS).includes(palette.preset))) throw new TypeError('パレットのプリセット設定が不正です');
+    if (!(palette.preset === null || Object.keys(BUILTIN_SETTINGS).includes(palette.preset))) throw new TypeError('パレットのプリセット設定が不正です');
     if (!validIso(palette.createdAt) || !validIso(palette.updatedAt)) throw new TypeError('パレットの更新日時が不正です');
     const entries = palette.entries.map((entry, index) => normalizeEntry(entry, index, id));
     if (new Set(entries.map(entry => entry.id)).size !== entries.length) throw new TypeError('パレット項目IDが重複しています');
@@ -128,7 +140,8 @@
     });
     return {
       paletteId: checked.id, name: checked.name, size: checked.size,
-      scoringEnabled: checked.scoringEnabled, entries: checked.entries
+      scoringEnabled: checked.scoringEnabled, entries: checked.entries,
+      layoutVersion: snapshot.layoutVersion === undefined ? 1 : snapshot.layoutVersion
     };
   }
 
@@ -136,7 +149,7 @@
     const checked = validatePalette(palette);
     return {
       paletteId: checked.id, name: checked.name, size: checked.size,
-      scoringEnabled: checked.scoringEnabled, entries: clone(checked.entries)
+      scoringEnabled: checked.scoringEnabled, entries: clone(checked.entries), layoutVersion: 2
     };
   }
 
@@ -188,6 +201,8 @@
     const paletteIds = new Set(palettes.map(palette => palette.id));
     for (const key of Object.keys(PRESETS)) {
       if (!paletteIds.has(preferences.defaultPaletteIds[key])) throw new TypeError('既定パレットが見つかりません');
+    }
+    for (const key of Object.keys(BUILTIN_SETTINGS)) {
       const builtin = palettes.find(palette => palette.id === BUILTIN_IDS[key]);
       if (!builtin || builtin.preset !== key) throw new TypeError('初期パレットが不正です');
     }
@@ -196,10 +211,23 @@
 
   function normalizePreferences(preferences = {}, { nowIso = new Date().toISOString(), idFactory = defaultIdFactory } = {}) {
     const source = isObject(preferences) ? clone(preferences) : {};
-    if (Array.isArray(source.palettes) || isObject(source.defaultPaletteIds)) return validatePreferences(source);
+    if (Array.isArray(source.palettes) || isObject(source.defaultPaletteIds)) {
+      if (!Array.isArray(source.palettes)) source.palettes = [];
+      for (const key of Object.keys(BUILTIN_SETTINGS)) {
+        const builtin = makeBuiltinPalette(key);
+        const index = source.palettes.findIndex(item => item && item.id === builtin.id);
+        if (index < 0) source.palettes.push(builtin);
+        else if (source.palettes[index].preset === key) source.palettes[index] = builtin;
+      }
+      return validatePreferences(source);
+    }
 
     const palettes = builtinPalettes();
-    const defaultPaletteIds = { ...BUILTIN_IDS };
+    const defaultPaletteIds = {
+      submission: BUILTIN_IDS.submission,
+      activity: BUILTIN_IDS.activity,
+      numeric: BUILTIN_IDS.numeric
+    };
     const legacy = normalizePaletteDefaults(source).paletteDefaults;
     for (const key of Object.keys(PRESETS)) {
       if (!legacy[key]) continue;
@@ -286,6 +314,52 @@
     return scores.length ? Math.max(...scores) : null;
   }
 
+  function paletteLayout(palette) {
+    const entries = Array.isArray(palette && palette.entries)
+      ? palette.entries.filter(entry => entry && entry.visible !== false).map(entry => ({
+        ...clone(entry), slotSpan: Number(entry.slotSpan) === 2 ? 2 : 1
+      }))
+      : [];
+    if (!entries.length) return { rows: [], columns: 0, buttons: [] };
+    const totalSlots = entries.reduce((sum, entry) => sum + entry.slotSpan, 0);
+    let columns = totalSlots <= 5 ? totalSlots : Math.ceil(totalSlots / 2);
+    let buttons = [];
+    let rowCount = 1;
+    while (true) {
+      let row = 1;
+      let column = 1;
+      let overflow = false;
+      buttons = [];
+      for (const entry of entries) {
+        if (column + entry.slotSpan - 1 > columns && row === 1) {
+          row = 2;
+          column = 1;
+        }
+        if (column + entry.slotSpan - 1 > columns) {
+          overflow = true;
+          break;
+        }
+        buttons.push({ entry, row, column, slotSpan: entry.slotSpan });
+        column += entry.slotSpan;
+      }
+      if (!overflow) {
+        rowCount = buttons.at(-1)?.row || 1;
+        break;
+      }
+      columns += 1;
+    }
+    const rows = Array.from({ length: rowCount }, (_, index) => buttons.filter(button => button.row === index + 1));
+    return { rows, columns, buttons };
+  }
+
+  function firstCellInputEntry(palette) {
+    const actions = new Set(['mark', 'date', 'redo']);
+    const entry = Array.isArray(palette && palette.entries)
+      ? palette.entries.find(item => item && item.visible !== false && actions.has(item.action || 'mark'))
+      : null;
+    return entry ? clone(entry) : null;
+  }
+
   function scoreForValue(snapshot, value) {
     const checked = validateSnapshot(snapshot);
     if (!checked.scoringEnabled) return { matched: false, score: null };
@@ -343,6 +417,7 @@
     normalizePaletteDefaults, paletteForSheet, setPaletteDefault, colorTokenForMark,
     normalizePreferences, validatePreferences, validatePalette, validateSnapshot,
     createUserPalette, duplicatePalette, updateUserPalette, deleteUserPalette,
-    paletteForColumn, snapshotPalette, maxPaletteScore, scoreForValue
+    paletteForColumn, snapshotPalette, maxPaletteScore, scoreForValue, paletteLayout,
+    firstCellInputEntry
   });
 })(globalThis);

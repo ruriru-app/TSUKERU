@@ -289,7 +289,9 @@
     state.groups = Array.isArray(state.groups) ? state.groups : [];
     state.sheetDefinitions = Array.isArray(state.sheetDefinitions) ? state.sheetDefinitions : [];
     state.classRecords = isObject(state.classRecords) ? state.classRecords : {};
-    state.preferences = isObject(state.preferences) ? state.preferences : {};
+    state.preferences = normalizePreferences(isObject(state.preferences) ? state.preferences : {}, {
+      nowIso: validIsoDate(state.savedAt) ? state.savedAt : new Date().toISOString()
+    });
     state.ui = { ...defaultUi(), ...(isObject(state.ui) ? state.ui : {}) };
     for (const sheet of state.sheetDefinitions) {
       if (!isObject(sheet.dueDatesByClass)) sheet.dueDatesByClass = {};
