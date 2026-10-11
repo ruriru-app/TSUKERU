@@ -11,6 +11,7 @@ let active=-1,method='',mode='○',modeAction='mark',override=false,clearReturn=
 let storageDb=null,saveQueue=null,persistenceReady=false,saveFailed=false;
 let pendingRestoreEnvelope=null;
 let pendingPwaUpdate=null,pwaReloadPending=false;
+let noticeTimer=null;
 let settingsSection='classes';
 let rosterNames=names,rosterKana=kana;
 const columnDoubleActivation=Interactions.createDoubleActivation({maxDelayMs:450,maxDistancePx:12});
@@ -198,6 +199,18 @@ function toggleTotal(j,checked){
  const c=sheet().columns[j];if(!c)return;
  c.includeInTotal=!!checked;render();
 }
+function showNotice(message,kind='success'){
+ let notice=$('appNotice');
+ if(!notice){notice=document.createElement('div');notice.id='appNotice';notice.className='app-notice';notice.setAttribute('role','status');notice.setAttribute('aria-live','polite');document.body.append(notice)}
+ clearTimeout(noticeTimer);notice.dataset.kind=kind;notice.textContent=message;notice.hidden=false;
+ noticeTimer=setTimeout(()=>{notice.hidden=true},2600);
+}
+async function copyVisibleTotals(){
+ const rows=recordRows().filter(row=>row.kind==='student');
+ const text=Interactions.formatTotalsForClipboard(rows.map(row=>recordTotal(row.classId,row.studentId)));
+ try{await Interactions.writeClipboardText(text);showNotice(`${rows.length}人分の集計結果をコピーしました`);return {ok:true,text}}
+ catch(error){showNotice(error?.message||'集計結果をコピーできませんでした','error');return {ok:false,error:error?.message||String(error)}}
+}
 function displayValue(j,i){
  const v=val(j,i);if(sheet().type!=='submission')return short(v);
  const r=submissionEvaluation(j,i);
@@ -354,7 +367,7 @@ function render(){
   h+=`<th class="head ${active===j?'active':''} ${c.includeInTotal===false?'excluded':''}" data-column-index="${j}" data-column-id="${esc(c.id)}" onpointerdown="columnPointerDown(event,'${esc(c.id)}')" onpointerup="columnPointerUp(event,'${esc(c.id)}',${j})" onpointercancel="columnPointerUp(event,'${esc(c.id)}',${j})"><div class="head-menu"><button type="button" title="列のメニュー" aria-label="${esc(c.title)}のメニュー" onclick="menu(${j})">…</button></div><span class="head-title">${esc(c.title)}</span><span class="head-points">${c.base>0?esc(c.base)+'点':''}</span><small class="head-due">${dueText}${missing?' ／ 未'+missing:''}${redo?' ／ 再'+redo:''}</small><div class="head-actions"><span class="lock-state" title="${active===j?'ロック解除中':'ロック中'}" aria-label="${active===j?'ロック解除中':'ロック中'}">${active===j?unlockIcon:lockIcon}</span><label class="total-choice" title="この列を合計点数に含める。非表示でもこの設定は維持されます。"><input class="total-toggle" type="checkbox" data-total="${j}" aria-label="${esc(c.title)}を集計に含める" ${c.includeInTotal!==false?'checked':''} onchange="toggleTotal(${j},this.checked)"></label></div></th><th class="add"><button title="右に列を追加" onclick="add(${j+1})">＋</button></th>`;
  });
  const count=s.columns.filter(c=>c.includeInTotal!==false).length;
- h+=`<th class="sum-head" title="チェックを付けた列だけ合計します。非表示の列も含みます。"><span>✓を付けた列の集計</span><small>${count}列対象</small></th></tr></thead><tbody>`;
+ h+=`<th class="sum-head" title="チェックを付けた列だけ合計します。非表示の列も含みます。"><span>✓を付けた列の集計</span><small>${count}列対象</small><button type="button" class="copy-totals" aria-label="集計点だけをコピー" title="集計点だけをコピー" onclick="copyVisibleTotals()">コピー</button></th></tr></thead><tbody>`;
  rows.forEach(row=>{
   if(row.kind==='section'){h+=`<tr class="class-separator"><th colspan="${2+s.columns.length*2}">${esc(classLabel(row.classId))}</th></tr>`;return}
   const classStudent=classInfo[row.classId].students.find(item=>item.id===row.studentId),studentIndex=classInfo[row.classId].students.findIndex(item=>item.id===row.studentId);

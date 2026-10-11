@@ -86,7 +86,37 @@
     return Object.freeze({ update, snapshot });
   }
 
+  function formatTotalsForClipboard(values) {
+    if (!Array.isArray(values)) throw new Error('コピーする集計結果が不正です');
+    return values.map(value => value == null || value === '－' ? '' : String(value)).join('\r\n');
+  }
+
+  async function writeClipboardText(text, { clipboard = root.navigator?.clipboard, documentRef = root.document } = {}) {
+    const value = String(text ?? '');
+    if (typeof clipboard?.writeText === 'function') {
+      await clipboard.writeText(value);
+      return true;
+    }
+    if (!documentRef?.body || typeof documentRef.createElement !== 'function' || typeof documentRef.execCommand !== 'function') {
+      throw new Error('このブラウザではクリップボードへコピーできません');
+    }
+    const textarea = documentRef.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    Object.assign(textarea.style, { position:'fixed', inset:'0 auto auto -9999px', opacity:'0' });
+    documentRef.body.append(textarea);
+    try {
+      textarea.focus();
+      textarea.select();
+      if (!documentRef.execCommand('copy')) throw new Error('クリップボードへコピーできませんでした');
+      return true;
+    } finally {
+      textarea.remove();
+    }
+  }
+
   root.TSUKERUInteractions = Object.freeze({
-    createDoubleActivation, formatSavedAt, createSaveStatusModel
+    createDoubleActivation, formatSavedAt, createSaveStatusModel,
+    formatTotalsForClipboard, writeClipboardText
   });
 })(globalThis);

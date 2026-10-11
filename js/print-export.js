@@ -73,15 +73,15 @@
 
   function styles() {
     return `
-      @page { size: A4 portrait; margin: 8mm; }
-      * { box-sizing: border-box; }
+      @page { size: A4 portrait; margin: 6mm; }
+      * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       html { color: #5e5550; background: #fff; font-family: system-ui, "Yu Gothic", "Hiragino Sans", sans-serif; }
       body { margin: 0; }
-      .print-section { padding-top: 4mm; break-inside: auto; page-break-inside: auto; }
+      .print-section { padding-top: 1mm; break-inside: auto; page-break-inside: auto; }
       .print-section + .print-section { break-before: page; page-break-before: always; }
-      .print-header { width: min(100%, calc(53mm + var(--column-count, 9) * 15.5mm)); min-height: 12mm; margin: 0 auto 2mm; display: flex; align-items: end; justify-content: space-between; gap: 4mm; }
-      .print-header h1 { margin: 0 0 1mm; font-size: 13pt; line-height: 1.15; }
-      .print-header p { margin: 0; font-size: 9pt; }
+      .print-header { width: min(100%, calc(53mm + var(--column-count, 9) * 15.5mm)); min-height: 9mm; margin: 0 auto 1mm; display: flex; align-items: end; justify-content: space-between; gap: 4mm; }
+      .print-header h1 { margin: 0 0 .6mm; font-size: 12pt; line-height: 1.1; }
+      .print-header p { margin: 0; font-size: 8pt; }
       .print-meta { display: flex; flex-direction: column; align-items: end; white-space: nowrap; font-size: 7pt; line-height: 1.35; }
       .checklist { --identity-width: 53mm; width: min(100%, calc(var(--identity-width) + var(--column-count) * 15.5mm)); margin: 0 auto; table-layout: fixed; border-collapse: collapse; }
       thead { display: table-header-group; }
@@ -92,12 +92,14 @@
       .no-column { width: 9mm; }
       .name-column { width: 32mm; text-align: left; padding-left: 1.5mm; white-space: nowrap; text-overflow: ellipsis; }
       th.no-column, th.name-column, .total-column { text-align: center; padding-left: 0; }
+      th.no-column, th.name-column, th.total-column { font-size: 9pt; }
       .total-column { width: 12mm; }
-      th.check-column { height: 43mm; padding: 1mm .5mm; vertical-align: bottom; }
-      .column-title { writing-mode: vertical-rl; text-orientation: upright; display: block; height: 28mm; margin: 0 auto 1mm; overflow: hidden; font-size: 8.5pt; line-height: 1.2; }
+      th.check-column { height: 36mm; padding: .7mm .5mm; vertical-align: bottom; }
+      .column-title { writing-mode: vertical-rl; text-orientation: upright; display: block; height: 22mm; margin: 0 auto .7mm; overflow: hidden; font-size: 8pt; line-height: 1.15; }
       .column-points, .column-due { display: block; white-space: nowrap; font-size: 6pt; line-height: 1.35; }
-      tbody tr { height: 5.5mm; }
-      td { height: 5.5mm; padding: .25mm .4mm; font-size: 7.5pt; line-height: 1.05; }
+      tbody tr { height: 6.2mm; }
+      tbody tr:nth-child(5n + 1):not(:first-child) td { border-top-width: .55mm; border-top-color: #a99b91; }
+      td { height: 6.2mm; padding: .25mm .4mm; font-size: 7.5pt; line-height: 1.05; }
       .record-cell { position: relative; }
       .cell-record, .cell-score, .cell-redo { display: block; white-space: nowrap; }
       .cell-score { color: #2d736c; font-size: 6pt; }
@@ -127,6 +129,9 @@
     printWindow.document.open();
     printWindow.document.write(buildDocument(bundle, { blank }));
     printWindow.document.close();
+    const closePrintWindow = () => printWindow.close?.();
+    if (typeof printWindow.addEventListener === 'function') printWindow.addEventListener('afterprint', closePrintWindow, { once:true });
+    else printWindow.onafterprint = closePrintWindow;
     printWindow.focus?.();
     printWindow.print?.();
     return { ok: true };

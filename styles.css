@@ -275,6 +275,10 @@ th.name { background:#fbfaf7; }
 .head-actions .total-choice { cursor:pointer; }
 .sum-head { min-width:118px;padding:8px;white-space:normal; }
 .sum-head span,.sum-head small { display:block; }
+.copy-totals { min-height:36px;margin-top:7px;padding:5px 10px;border-color:#9bcfc6;color:#286c60;background:#f2fbf8;font-size:11px;font-weight:800; }
+.app-notice { position:fixed;left:50%;top:58px;z-index:40;transform:translateX(-50%);padding:10px 16px;border:1px solid #9bcfc6;border-radius:999px;color:#286c60;background:#f2fbf8;box-shadow:0 6px 20px rgba(72,54,44,.18);font-weight:800;white-space:nowrap; }
+.app-notice[data-kind="error"] { color:#a33123;border-color:#efb9b1;background:#fff0ed; }
+.app-notice[hidden] { display:none; }
 .class-separator th { position:static;height:34px;padding:0 12px;text-align:left;color:#397c73;background:#eaf8f4;border-top:2px solid var(--accent); }
 .total-toggle { accent-color:var(--accent-dark); }
 
