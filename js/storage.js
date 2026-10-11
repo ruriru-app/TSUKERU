@@ -41,6 +41,14 @@
     await transactionDone(transaction);
   }
 
+  async function migrateStoredState({ read, write, migrate }) {
+    const raw = await read();
+    if (raw === null || raw === undefined) return null;
+    const migrated = migrate(raw);
+    if (JSON.stringify(raw) !== JSON.stringify(migrated)) await write(migrated);
+    return migrated;
+  }
+
   function createSaveQueue({ write, onStatus = () => {}, delayMs = 250 }) {
     let pending = null;
     let dirty = false;
@@ -92,6 +100,7 @@
 
   root.TSUKERUStorage = Object.freeze({
     DB_NAME, DB_VERSION, STORE_NAME, CURRENT_KEY,
-    openTsukeruDb, readCurrentState, writeCurrentState, createSaveQueue, requestPersistentStorage
+    openTsukeruDb, readCurrentState, writeCurrentState, migrateStoredState,
+    createSaveQueue, requestPersistentStorage
   });
 })(globalThis);

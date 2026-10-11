@@ -1,6 +1,6 @@
 (function (root) {
   const APP_ID = 'TSUKERU';
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
   const DEMO_NAMES = ['小鳥遊 美咲','四月一日 陽菜','月見里 悠真','佐藤 結衣','田中 陽翔','青木 はる','伊藤 そうた','加藤 みお','山田 けん','中村 あい','渡辺 さき','森川 りお'];
   const DEMO_KANA = ['たかなし みさき','わたぬき ひな','やまなし ゆうま','さとう ゆい','たなか はると','あおき はる','いとう そうた','かとう みお','やまだ けん','なかむら あい','わたなべ さき','もりかわ りお'];
 
@@ -48,14 +48,12 @@
   }
 
   function createBlankState({ nowIso = new Date().toISOString() } = {}) {
-    return {
-      appId: APP_ID, schemaVersion: SCHEMA_VERSION, savedAt: nowIso,
-      ui: { activeClassId: null, activeSheetId: null, lastColumnId: null, kanaMode: false, numeric: false },
-      classes: []
-    };
+    const workspace = root.TSUKERUWorkspace;
+    if (!workspace) throw new Error('TSUKERUの保存形式を初期化できません');
+    return workspace.createEmptyWorkspace({ nowIso });
   }
 
-  function createDemoState({ idFactory = defaultIdFactory, nowIso = new Date().toISOString() } = {}) {
+  function createLegacyDemoState({ idFactory = defaultIdFactory, nowIso = new Date().toISOString() } = {}) {
     const classes = ['6年1組', '6年2組', '5年1組'].map(name => createClass(name, idFactory));
     const first = classes[0];
     const sheet = first.sheets[0];
@@ -68,7 +66,7 @@
     sheet.meta[key(0,4)] = { redo: true, initialSubmitted: '2026-10-08', returned: null, submitted: null };
     sheet.meta[key(1,2)] = { redo: true, initialSubmitted: '2026-10-15', returned: null, submitted: null };
     return {
-      appId: APP_ID, schemaVersion: SCHEMA_VERSION, savedAt: nowIso,
+      appId: APP_ID, schemaVersion: 1, savedAt: nowIso,
       ui: {
         activeClassId: first.id, activeSheetId: first.sheets[0].id,
         lastColumnId: null, kanaMode: false, numeric: false
@@ -77,91 +75,51 @@
     };
   }
 
-  function requireUnique(items, label) {
-    const ids = items.map(item => item && item.id);
-    if (ids.some(id => typeof id !== 'string' || !id)) throw new Error(`${label}がありません`);
-    if (new Set(ids).size !== ids.length) throw new Error(`${label}が重複しています`);
-  }
-
-  function isObject(value) {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-  }
-
-  function requireString(value, label, { allowEmpty = true } = {}) {
-    if (typeof value !== 'string' || (!allowEmpty && !value.trim())) throw new Error(`${label}が不正です`);
-  }
-
-  function requireFinite(value, label) {
-    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${label}が不正です`);
-  }
-
-  function validateRecordObject(records, allowedKeys, label, validateValue) {
-    if (!isObject(records)) throw new Error(`${label}が不正です`);
-    for (const [key, value] of Object.entries(records)) {
-      if (!allowedKeys.has(key)) throw new Error(`${label}に対応する児童または評価列がありません`);
-      validateValue(value);
-    }
-  }
-
   function migrateState(raw) {
-    if (!raw || typeof raw !== 'object') throw new Error('保存データを読み取れません');
-    if (raw.appId !== APP_ID) throw new Error('TSUKERUの保存データではありません');
-    if (Number(raw.schemaVersion) > SCHEMA_VERSION) throw new Error('このアプリより新しい形式の保存データです');
-    if (Number(raw.schemaVersion) !== SCHEMA_VERSION) throw new Error('対応していない古い保存形式です');
-    const state = structuredClone(raw);
-    if (!Array.isArray(state.classes) || state.classes.length === 0) throw new Error('学級データがありません');
-    if (!isObject(state.ui)) throw new Error('画面状態が不正です');
-    if (typeof state.ui.kanaMode !== 'boolean' || typeof state.ui.numeric !== 'boolean') throw new Error('画面状態が不正です');
-    requireUnique(state.classes, '学級ID');
+    const workspace = root.TSUKERUWorkspace;
+    if (!workspace) throw new Error('TSUKERUの保存形式を読み込めません');
+    const state = workspace.migrateWorkspace(raw);
+    if (root.TSUKERUPalette) state.preferences = root.TSUKERUPalette.normalizePaletteDefaults(state.preferences);
+    return attachLegacyViews(state);
+  }
+
+  function createDemoState(options = {}) {
+    return migrateState(createLegacyDemoState(options));
+  }
+
+  function attachLegacyViews(state) {
+    const workspace = root.TSUKERUWorkspace;
     for (const classRecord of state.classes) {
-      if (!isObject(classRecord)) throw new Error('学級データが不正です');
-      requireString(classRecord.school, '学校名');
-      requireString(classRecord.name, '学級名', { allowEmpty: false });
-      requireString(classRecord.year, '学年・年度');
-      if (!Number.isInteger(classRecord.count) || classRecord.count < 1 || classRecord.count > 200) throw new Error('学級人数が不正です');
-      if (!Array.isArray(classRecord.students) || classRecord.students.length === 0 || !Array.isArray(classRecord.sheets) || classRecord.sheets.length === 0) throw new Error('学級データが不正です');
-      if (classRecord.count !== classRecord.students.length) throw new Error('学級人数と名簿が一致しません');
-      if (!Array.isArray(classRecord.weekdays) || classRecord.weekdays.some(day => !Number.isInteger(day) || day < 0 || day > 6)) throw new Error('授業曜日が不正です');
-      if (!isObject(classRecord.exceptions) || Object.entries(classRecord.exceptions).some(([date, kind]) => !/^\d{4}-\d{2}-\d{2}$/.test(date) || !['on', 'off'].includes(kind))) throw new Error('授業日程の例外が不正です');
-      requireUnique(classRecord.students, '児童ID');
-      const attendanceNumbers = new Set();
-      for (const student of classRecord.students) {
-        requireString(student.no, '出席番号', { allowEmpty: false });
-        requireString(student.name, '児童氏名', { allowEmpty: false });
-        requireString(student.kana, 'よみがな');
-        if (!/^\d+$/.test(student.no) || Number(student.no) < 1 || attendanceNumbers.has(String(Number(student.no)))) throw new Error('出席番号が不正または重複しています');
-        attendanceNumbers.add(String(Number(student.no)));
-      }
-      requireUnique(classRecord.sheets, 'チェック表ID');
-      for (const sheet of classRecord.sheets) {
-        if (!isObject(sheet)) throw new Error('チェック表データが不正です');
-        requireString(sheet.name, 'チェック表名', { allowEmpty: false });
-        if (!['submission', 'evaluation', 'number'].includes(sheet.type)) throw new Error('チェック表の種類が不正です');
-        if (!Array.isArray(sheet.columns) || sheet.columns.length === 0) throw new Error('評価列データが不正です');
-        requireUnique(sheet.columns, '評価列ID');
-        for (const column of sheet.columns) {
-          if (!isObject(column)) throw new Error('評価列データが不正です');
-          requireString(column.title, '評価列タイトル', { allowEmpty: false });
-          requireString(column.due, '提出期限');
-          if (column.due && !/^\d{4}-\d{2}-\d{2}$/.test(column.due)) throw new Error('提出期限が不正です');
-          for (const field of ['base', 'interval', 'penalty', 'redoPenalty', 'zeroDays']) requireFinite(column[field], '評価列の数値設定');
-          if (!['days', 'lesson', 'none'].includes(column.basis)) throw new Error('評価列の減点方式が不正です');
-          if (column.includeInTotal === undefined) column.includeInTotal = true;
-          if (column.hidden === undefined) column.hidden = false;
-          if (typeof column.zeroFloor !== 'boolean' || typeof column.includeInTotal !== 'boolean' || typeof column.hidden !== 'boolean') throw new Error('評価列の設定が不正です');
-        }
-        const allowedKeys = new Set(sheet.columns.flatMap(column => classRecord.students.map(student => recordKey(column.id, student.id))));
-        validateRecordObject(sheet.values, allowedKeys, '記録値', value => {
-          if (typeof value !== 'string') throw new Error('記録値が不正です');
-        });
-        validateRecordObject(sheet.meta, allowedKeys, '記録詳細', value => {
-          if (!isObject(value)) throw new Error('記録詳細が不正です');
-          for (const detail of Object.values(value)) {
-            if (!(detail === null || ['string', 'number', 'boolean'].includes(typeof detail))) throw new Error('記録詳細が不正です');
-          }
-        });
-      }
+      const sheets = workspace.availableSheetsForClass(state, classRecord.id).map(definition => {
+        const bucket = workspace.ensureClassRecord(state, classRecord.id, definition.id);
+        return {
+          get id() { return definition.id; },
+          get name() { return definition.name; },
+          set name(value) { definition.name = value; },
+          get type() { return definition.type; },
+          set type(value) { definition.type = value; },
+          get columns() { return definition.columns; },
+          set columns(value) { definition.columns = value; },
+          values: bucket.values,
+          meta: bucket.meta
+        };
+      });
+      Object.defineProperty(classRecord, 'sheets', { value: sheets, writable: true, configurable: true, enumerable: false });
     }
+    Object.defineProperties(state.ui, {
+      activeClassId: {
+        get() { return this.currentClassId; },
+        set(value) { this.currentClassId = value; },
+        configurable: true,
+        enumerable: false
+      },
+      activeSheetId: {
+        get() { return this.currentSheetId; },
+        set(value) { this.currentSheetId = value; },
+        configurable: true,
+        enumerable: false
+      }
+    });
     return state;
   }
 
@@ -175,6 +133,7 @@
 
   root.TSUKERUModel = Object.freeze({
     APP_ID, SCHEMA_VERSION, DEMO_NAMES, DEMO_KANA, defaultIdFactory,
-    recordKey, createSheet, createBlankState, createDemoState, migrateState, getClass, getSheet
+    recordKey, createSheet, createBlankState, createLegacyDemoState, createDemoState,
+    migrateState, attachLegacyViews, getClass, getSheet
   });
 })(globalThis);

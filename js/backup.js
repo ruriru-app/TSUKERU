@@ -7,7 +7,9 @@
   }
 
   function createBackupEnvelope(state, now = new Date()) {
-    return { appId: 'TSUKERU', formatVersion: FORMAT_VERSION, createdAt: createdAtValue(now), state: structuredClone(state) };
+    const model = root.TSUKERUModel;
+    const normalized = model ? model.migrateState(state) : state;
+    return { appId: 'TSUKERU', formatVersion: FORMAT_VERSION, createdAt: createdAtValue(now), state: structuredClone(normalized) };
   }
 
   function serializeBackup(envelope) {
@@ -25,6 +27,7 @@
     const model = root.TSUKERUModel;
     if (!model) throw new Error('TSUKERUのデータ検証を開始できません');
     envelope.state = model.migrateState(envelope.state);
+    if (envelope.state.classes.length === 0) throw new Error('学級データがありません');
     return envelope;
   }
 
@@ -34,7 +37,9 @@
       createdAt: envelope.createdAt,
       classCount: classes.length,
       studentCount: classes.reduce((sum, item) => sum + (item.students?.length || 0), 0),
-      columnCount: classes.reduce((sum, item) => sum + (item.sheets || []).reduce((sheetSum, sheet) => sheetSum + (sheet.columns?.length || 0), 0), 0)
+      columnCount: Array.isArray(envelope.state?.sheetDefinitions)
+        ? envelope.state.sheetDefinitions.reduce((sum, sheet) => sum + (sheet.columns?.length || 0), 0)
+        : classes.reduce((sum, item) => sum + (item.sheets || []).reduce((sheetSum, sheet) => sheetSum + (sheet.columns?.length || 0), 0), 0)
     };
   }
 

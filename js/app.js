@@ -1,35 +1,44 @@
 
 const $=x=>document.getElementById(x),today=()=>new Date().toLocaleDateString('sv-SE');
-const M=globalThis.TSUKERUModel,D=globalThis.TSUKERUDomain,R=globalThis.TSUKERURoster,S=globalThis.TSUKERUStorage,B=globalThis.TSUKERUBackup,P=globalThis.TSUKERUPwa;
-const names=M.DEMO_NAMES,kana=M.DEMO_KANA,colors={'○':'#F48BA8','△':'#A8D08D','×':'#8BB7E8','欠':'#C5C5C5','再':'#B59AD9','日付':'#F7D878'};
+const M=globalThis.TSUKERUModel,W=globalThis.TSUKERUWorkspace,D=globalThis.TSUKERUDomain,R=globalThis.TSUKERURoster,S=globalThis.TSUKERUStorage,B=globalThis.TSUKERUBackup,P=globalThis.TSUKERUPwa,Palette=globalThis.TSUKERUPalette,Settings=globalThis.TSUKERUSettings;
+const names=M.DEMO_NAMES,kana=M.DEMO_KANA,colors={'A':'#E4F4E7','○':'#E4F4E7','B':'#FFF3C9','△':'#FFF3C9','C':'#F9E0E0','×':'#F9E0E0','欠':'#EDEDED','再':'#EEE6F8','再返':'#EEE6F8','日付':'#FFF1BF'};
 let appState=M.createDemoState({nowIso:new Date().toISOString()});
 let classes=appState.classes.map(c=>c.id);
 let classInfo=Object.fromEntries(appState.classes.map(c=>[c.id,c]));
 let db=Object.fromEntries(appState.classes.map(c=>[c.id,c.sheets]));
-let cls=appState.ui.activeClassId||classes[0],idx=Math.max(0,db[cls].findIndex(s=>s.id===appState.ui.activeSheetId));
-let active=-1,method='',mode='○',override=false,numberRow=0,kanaMode=false,numeric=false;
+let cls=appState.ui.currentClassId||classes[0],idx=Math.max(0,db[cls].findIndex(s=>s.id===appState.ui.currentSheetId));
+let active=-1,method='',mode='○',override=false,numberRow=0,numberTarget=null,kanaMode=false,numeric=false;
 let storageDb=null,saveQueue=null,persistenceReady=false,saveFailed=false;
 let pendingRestoreEnvelope=null;
 let pendingPwaUpdate=null,pwaReloadPending=false;
+let settingsSection='classes';
 let rosterNames=names,rosterKana=kana;
 const create=(name,type)=>M.createSheet(name,type,M.defaultIdFactory);
-const sheet=()=>db[cls][idx],studentAt=i=>classInfo[cls]?.students?.[i],stableKey=(j,i)=>M.recordKey(sheet().columns[j].id,studentAt(i).id);
+const sheet=()=>db[cls]?.[idx],studentAt=i=>classInfo[cls]?.students?.[i],stableKey=(j,i)=>M.recordKey(sheet().columns[j].id,studentAt(i).id);
 const meta=(j,i)=>sheet().meta[stableKey(j,i)]||{},val=(j,i)=>sheet().values[stableKey(j,i)]||'',setVal=(j,i,v)=>{sheet().values[stableKey(j,i)]=v;render()};
-const isDate=v=>/^\d{4}-\d\d-\d\d$/.test(v),short=v=>isDate(v)?`${+v.slice(5,7)}/${+v.slice(8)}`:v,style=v=>({'○':'o','△':'tri','×':'x','欠':'abs','再':'redo'})[v]||(isDate(v)?'date':'');
+const isDate=v=>/^\d{4}-\d\d-\d\d$/.test(v),short=v=>isDate(v)?`${+v.slice(5,7)}/${+v.slice(8)}`:v,style=v=>({'A':'o','○':'o','B':'tri','△':'tri','C':'x','×':'x','欠':'abs','再':'redo'})[v]||(isDate(v)?'date':'');
 
 function snapshotState(){
- return structuredClone({
-  appId:M.APP_ID,schemaVersion:M.SCHEMA_VERSION,savedAt:new Date().toISOString(),
-  ui:{activeClassId:cls,activeSheetId:sheet()?.id||null,lastColumnId:active>=0?sheet().columns[active]?.id||null:null,kanaMode,numeric},
-  classes:classes.map(id=>{const source=classInfo[id],{sheets:_ignored,...classFields}=source;return {...classFields,id,students:(source.students||[]).map(({recordCount,...student})=>student),sheets:db[id]||[]}})
- });
+ appState.savedAt=new Date().toISOString();
+ appState.ui={
+  view:appState.ui?.view||'record',currentClassId:cls||null,currentSheetId:sheet()?.id||null,
+  currentGroupId:appState.ui?.currentGroupId||null,recordMode:appState.ui?.recordMode||'class',
+  lastColumnId:active>=0?sheet().columns[active]?.id||null:null,kanaMode,numeric
+ };
+ for(const classId of classes){
+  for(const view of db[classId]||[]){
+   const definition=appState.sheetDefinitions.find(item=>item.id===view.id);if(!definition)continue;
+   if(definition.scope.type==='class')definition.dueDatesByClass[classId]=Object.fromEntries(view.columns.map(column=>[column.id,column.due||'']));
+  }
+ }
+ return W.validateWorkspace(structuredClone(appState));
 }
 function applyState(state){
  appState=M.migrateState(state);classes=appState.classes.map(c=>c.id);classInfo=Object.fromEntries(appState.classes.map(c=>[c.id,c]));db=Object.fromEntries(appState.classes.map(c=>[c.id,c.sheets]));
- cls=classes.includes(appState.ui?.activeClassId)?appState.ui.activeClassId:classes[0];idx=Math.max(0,(db[cls]||[]).findIndex(s=>s.id===appState.ui?.activeSheetId));active=-1;method='';kanaMode=!!appState.ui?.kanaMode;numeric=!!appState.ui?.numeric;syncRoster();
+ cls=classes.includes(appState.ui?.currentClassId)?appState.ui.currentClassId:classes[0];idx=Math.max(0,(db[cls]||[]).findIndex(s=>s.id===appState.ui?.currentSheetId));active=-1;method='';kanaMode=!!appState.ui?.kanaMode;numeric=!!appState.ui?.numeric;syncRoster();return appState;
 }
 function createStarterState(){
- const state=M.createDemoState({nowIso:new Date().toISOString()}),first=state.classes[0];state.classes=[first];first.school='';first.name='クラス1';first.count=35;first.students=Array.from({length:35},(_,i)=>({id:M.defaultIdFactory('student'),no:String(i+1),name:'（未登録）',kana:''}));first.sheets.forEach(s=>{s.values={};s.meta={}});state.ui.activeClassId=first.id;state.ui.activeSheetId=first.sheets[0].id;return state;
+ const state=M.createLegacyDemoState({nowIso:new Date().toISOString()}),first=state.classes[0];state.classes=[first];first.school='';first.name='クラス1';first.count=35;first.students=Array.from({length:35},(_,i)=>({id:M.defaultIdFactory('student'),no:String(i+1),name:'（未登録）',kana:''}));first.sheets.forEach(s=>{s.values={};s.meta={}});state.ui.activeClassId=first.id;state.ui.activeSheetId=first.sheets[0].id;return M.migrateState(state);
 }
 function updateSaveStatus(status,error){
  const el=$('saveStatus');if(!el)return;saveFailed=status==='error';
@@ -97,9 +106,9 @@ function showFirstRun(){
 async function initializePersistence(){
  try{
   storageDb=await S.openTsukeruDb(indexedDB);saveQueue=S.createSaveQueue({write:state=>S.writeCurrentState(storageDb,state),onStatus:updateSaveStatus,delayMs:250});
-  const saved=await S.readCurrentState(storageDb);S.requestPersistentStorage(navigator.storage).catch(()=>{});
-  if(saved&&saved.classes?.length){applyState(saved);persistenceReady=true;render()}
-  else if(new URLSearchParams(location.search).get('demo')==='1'){applyState(M.createDemoState({nowIso:new Date().toISOString()}));persistenceReady=true;render()}
+  const saved=await S.migrateStoredState({read:()=>S.readCurrentState(storageDb),write:state=>S.writeCurrentState(storageDb,state),migrate:M.migrateState});S.requestPersistentStorage(navigator.storage).catch(()=>{});
+  if(saved&&saved.classes?.length){applyState(saved);appState.ui.view='home';persistenceReady=true;render()}
+  else if(new URLSearchParams(location.search).get('demo')==='1'){applyState(M.createDemoState({nowIso:new Date().toISOString()}));appState.ui.view=new URLSearchParams(location.search).get('view')==='home'?'home':'record';persistenceReady=true;render()}
   else{render();showFirstRun()}
  }catch(error){render();updateSaveStatus('error',error);modal('<h3>端末内保存を開始できません</h3><p>このまま操作できますが、画面を閉じると入力が消える可能性があります。ChromeまたはSafariの通常モードで開き直してください。</p><footer><button onclick="dismissModal()">確認</button></footer>')}
  document.body.dataset.appReady='true';
@@ -215,14 +224,18 @@ function saveRedo(j,i){
 }
 function batchReturn(){
  if(active<0||sheet().type!=='submission')return;
- const eligible=rosterNames.map((n,i)=>({n,i,m:meta(active,i),v:val(active,i)})).filter(x=>(x.v==='再'||x.m.redo)&&!x.m.returned&&!x.m.submitted);
+ const column=sheet().columns[active],combined=sheetDefinition()?.scope.type==='group'&&appState.ui.recordMode==='combined';
+ const eligible=recordRows().filter(row=>row.kind==='student').map(row=>({
+  ...row,m:recordMeta(row.classId,row.studentId,column.id),v:recordValue(row.classId,row.studentId,column.id)
+ })).filter(row=>(row.v==='再'||row.m.redo)&&!row.m.returned&&!row.m.submitted);
  if(!eligible.length){modal('<h3>再提出分を返却</h3><p>この列には、返却日が未設定の再提出待ちがありません。</p><footer><button onclick="dismissModal()">閉じる</button></footer>');return}
- modal(`<h3>再提出分を一括返却</h3><p class="hint">選択した児童に返却日を一括登録します。再提出期限の個別入力は不要です。</p><label>返却日<input type="date" id="batchDate" value="${today()}"></label><p class="hint">次の授業日を追加減点の基準にします（クラス設定を参照）。</p><div style="max-height:170px;overflow:auto">${eligible.map(x=>`<label><input type="checkbox" class="batchPerson" value="${x.i}" checked> ${x.i+1} ${esc(x.n)}</label>`).join('')}</div><footer><button onclick="dismissModal()">キャンセル</button><button onclick="saveBatchReturn()">まとめて記録</button></footer>`);
+ modal(`<h3>再提出分を一括返却</h3><p class="hint">選択した児童に返却日を一括登録します。再提出期限の個別入力は不要です。</p><label>返却日<input type="date" id="batchDate" value="${today()}"></label><p class="hint">次の授業日を追加減点の基準にします（各クラスの設定を参照）。</p><div style="max-height:170px;overflow:auto">${eligible.map(row=>`<label><input type="checkbox" class="batchPerson" data-batch-class-id="${esc(row.classId)}" data-batch-student-id="${esc(row.studentId)}" checked> ${combined?esc(classLabel(row.classId))+'｜':''}${esc(row.no)} ${esc(row.name)}</label>`).join('')}</div><footer><button onclick="dismissModal()">キャンセル</button><button onclick="saveBatchReturn()">まとめて記録</button></footer>`);
 }
 function saveBatchReturn(){
- const d=$('batchDate').value,ids=[...document.querySelectorAll('.batchPerson:checked')].map(e=>+e.value);
- if(!d||!ids.length){alert('返却日と対象者を指定してください');return}
- ids.forEach(i=>{const k=stableKey(active,i),m={...meta(active,i)};m.redo=true;m.returned=d;m.redoDue=nextLesson(d);sheet().meta[k]=m});
+ const d=$('batchDate').value,targets=[...document.querySelectorAll('.batchPerson:checked')];
+ if(!d||!targets.length){alert('返却日と対象者を指定してください');return}
+ const columnId=sheet().columns[active].id;
+ targets.forEach(input=>{const classId=input.dataset.batchClassId,studentId=input.dataset.batchStudentId,bucket=recordBucket(classId),k=M.recordKey(columnId,studentId),m={...(bucket.meta[k]||{})};m.redo=true;m.returned=d;m.redoDue=D.nextLessonAfter(d,scheduleForClass(classId));bucket.meta[k]=m});
  dismissModal();render();
 }
 function redoDetails(j,i){const m=meta(j,i);if(m.redo){
@@ -231,36 +244,88 @@ function redoDetails(j,i){const m=meta(j,i);if(m.redo){
  }else redoEditor(j,i)
 }
 const lockIcon='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#777" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>',unlockIcon='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#278a78" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0"/></svg>';
+function showHome(){active=-1;method='';appState.ui.view='home';render()}
+function openSettings(section='classes'){active=-1;method='';settingsSection=section;appState.ui.view='settings';dismissModal();render()}
+function openClassRecord(classId){
+ if(!classes.includes(classId))return;
+ cls=classId;const available=db[cls]||[],preferred=appState.ui.currentSheetId;
+ idx=Math.max(0,available.findIndex(item=>item.id===preferred));active=-1;method='';appState.ui.view='record';syncRoster();render();
+}
+function renderHome(){
+ const cards=classes.map(classId=>{const info=classInfo[classId],sheetCount=(db[classId]||[]).length;return `<button type="button" class="class-card" data-class-card="${esc(classId)}" aria-label="${esc(classLabel(classId))}の記録を開く" onclick="openClassRecord('${esc(classId)}')"><strong>${esc(classLabel(classId))}</strong><span>${info.students.length}人の名簿</span><span>${sheetCount}件のシート</span></button>`}).join('');
+ $('homeView').innerHTML=`<div class="home-heading"><div><h1 id="homeTitle">記録するクラスを選ぶ</h1><p>授業で使うクラスを選ぶと、前回のシートまたは先頭のシートを開きます。</p></div></div>${cards?`<div class="class-grid">${cards}</div>`:'<div class="empty-home">クラスがまだありません。設定からクラスと名簿を登録してください。</div>'}`;
+}
+function sheetDefinition(){return appState.sheetDefinitions.find(item=>item.id===sheet()?.id)||null}
+function recordRows(){
+ const definition=sheetDefinition();if(!definition)return[];
+ const combined=definition.scope.type==='group'&&appState.ui.recordMode==='combined';
+ const rows=W.rowsForSheet(appState,{sheetId:definition.id,classId:cls,groupId:definition.scope.groupId||null,mode:combined?'combined':'class'});
+ return combined?rows:rows.filter(row=>row.kind==='student');
+}
+function recordBucket(classId){return appState.classRecords[classId]?.[sheet().id]}
+function recordValue(classId,studentId,columnId){return recordBucket(classId)?.values?.[M.recordKey(columnId,studentId)]||''}
+function recordMeta(classId,studentId,columnId){return recordBucket(classId)?.meta?.[M.recordKey(columnId,studentId)]||{}}
+function columnForClass(column,classId){const definition=sheetDefinition(),due=definition?.dueDatesByClass?.[classId]?.[column.id];return {...column,due:due??column.due??''}}
+function scheduleForClass(classId){return {weekdays:classInfo[classId]?.weekdays,exceptions:classInfo[classId]?.exceptions}}
+function recordEvaluation(classId,studentId,column){return D.submissionEvaluation({column:columnForClass(column,classId),value:recordValue(classId,studentId,column.id),meta:recordMeta(classId,studentId,column.id),schedule:scheduleForClass(classId),today:today()})}
+function recordScore(classId,studentId,column){return D.scoreRecord({sheetType:sheet().type,column:columnForClass(column,classId),value:recordValue(classId,studentId,column.id),meta:recordMeta(classId,studentId,column.id),schedule:scheduleForClass(classId),today:today()})}
+function recordDisplay(classId,studentId,column){const value=recordValue(classId,studentId,column.id);if(sheet().type!=='submission')return short(value);const result=recordEvaluation(classId,studentId,column);return result.submitted?(result.redone?'再':'')+(result.zeroLocked?'⚠':'')+short(result.submitted):value}
+function recordMarkStyle(classId,studentId,column){const value=recordValue(classId,studentId,column.id);if(sheet().type!=='submission')return style(value);const result=recordEvaluation(classId,studentId,column);if(result.redone&&value)return'redo';if(result.submitted&&result.zeroLocked)return'zero';return style(value)}
+function recordTotal(classId,studentId){const values=sheet().columns.map(column=>column.includeInTotal===false?null:recordScore(classId,studentId,column)).filter(value=>typeof value==='number'&&Number.isFinite(value));return values.length?values.reduce((sum,value)=>sum+value,0):'－'}
+function setRecordMode(mode){const definition=sheetDefinition();if(mode==='combined'&&definition?.scope.type!=='group')return;appState.ui.recordMode=mode;appState.ui.currentGroupId=definition?.scope.groupId||null;active=-1;render()}
+function renderRecordModeToggle(){let toggle=$('recordModeToggle');if(!toggle){toggle=document.createElement('div');toggle.id='recordModeToggle';toggle.className='record-mode-toggle';$('sh').after(toggle)}const shared=sheetDefinition()?.scope.type==='group';toggle.hidden=!shared;if(shared)toggle.innerHTML=`<button type="button" data-record-mode="class" class="${appState.ui.recordMode!=='combined'?'selected':''}" onclick="setRecordMode('class')">クラス別</button><button type="button" data-record-mode="combined" class="${appState.ui.recordMode==='combined'?'selected':''}" onclick="setRecordMode('combined')">合同</button>`;else appState.ui.recordMode='class'}
 function render(){
- const s=sheet();
  $('cl').innerHTML=classes.map(c=>`<option value="${esc(c)}" ${cls===c?'selected':''}>${esc(classLabel(c))}</option>`).join('')+'<option value="__settings__">⚙ クラス設定・追加</option>';
- $('sh').innerHTML=db[cls].map((x,i)=>`<option value="${i}" ${idx===i?'selected':''}>${esc(x.name)}</option>`).join('');
+ $('sh').innerHTML=(db[cls]||[]).map((x,i)=>`<option value="${i}" ${idx===i?'selected':''}>${esc(x.name)}</option>`).join('');
+ const isHome=appState.ui.view==='home',isSettings=appState.ui.view==='settings';document.body.dataset.view=isHome?'home':isSettings?'settings':'record';
+ $('recordControls').hidden=isHome||isSettings;$('homeView').hidden=!isHome;$('recordView').hidden=isHome||isSettings;$('settingsView').hidden=!isSettings;$('float').hidden=isHome||isSettings;
+ if(isHome){renderHome();$('status').textContent='この端末に自動保存｜別端末とは同期されません｜定期的に手動バックアップ';scheduleSave();return}
+ if(isSettings){
+  Settings.mount($('settingsView'),{
+   getState:()=>appState,
+   updateState:next=>{applyState(next);appState.ui.view='settings';scheduleSave();return appState},
+   exportBackup:prefix=>downloadCurrentBackup(prefix),importBackup:()=>chooseRestoreFile(),
+   editClass:classId=>{cls=classId;idx=0;syncRoster();openClassSettings()},
+   addClass:()=>{openClassSettings();newClassEdit()},navigate:view=>{appState.ui.view=view;render()},
+   resetAcademic:()=>{applyState(W.resetAcademicData(appState));appState.ui.view='home';render()}
+  },settingsSection);
+  $('status').textContent='設定内容はこの端末に自動保存されます｜別端末とは同期されません';scheduleSave();return
+ }
+ const s=sheet();
+ renderRecordModeToggle();
+ const rows=recordRows(),studentRows=rows.filter(row=>row.kind==='student');
  let h=`<thead><tr><th class="name"><button onclick="kanaMode=!kanaMode;render()">${kanaMode?'ひらがな':'番号・氏名'}</button></th>`;
  s.columns.forEach((c,j)=>{
   if(c.hidden){h+=`<th class="hidden-marker"><button title="${esc(c.title)}を再表示（集計${c.includeInTotal===false?'対象外':'対象'}）" aria-label="${esc(c.title)}を再表示" onclick="sheet().columns[${j}].hidden=false;render()">💬</button></th>`;return}
-  const missing=rosterNames.filter((_,i)=>val(j,i)==='×').length,redo=rosterNames.filter((_,i)=>val(j,i)==='再'&&!meta(j,i).submitted).length;
-  h+=`<th class="head ${active===j?'active':''} ${c.includeInTotal===false?'excluded':''}"><span class="head-title">${esc(c.title)}</span><small>${c.due?short(c.due)+'〆 ':''}${missing?'未'+missing+' ':''}${redo?'再'+redo:''}</small><div class="head-actions"><button title="${active===j?'ロック':'編集する'}" onclick="lock(${j})">${active===j?unlockIcon:lockIcon}</button><button title="列のメニュー" onclick="menu(${j})">⋯</button><label class="total-choice" title="この列を合計点数に含める。非表示でもこの設定は維持されます。"><input class="total-toggle" type="checkbox" data-total="${j}" aria-label="${esc(c.title)}を集計に含める" ${c.includeInTotal!==false?'checked':''} onchange="toggleTotal(${j},this.checked)">集計</label></div></th><th class="add"><button title="右に列を追加" onclick="add(${j+1})">＋</button></th>`;
+  const missing=studentRows.filter(row=>recordValue(row.classId,row.studentId,c.id)==='×').length,redo=studentRows.filter(row=>recordValue(row.classId,row.studentId,c.id)==='再'&&!recordMeta(row.classId,row.studentId,c.id).submitted).length,due=sheetDefinition()?.dueDatesByClass?.[cls]?.[c.id]??c.due;
+  h+=`<th class="head ${active===j?'active':''} ${c.includeInTotal===false?'excluded':''}"><div class="head-menu"><button type="button" title="列のメニュー" aria-label="${esc(c.title)}のメニュー" onclick="menu(${j})">…</button></div><span class="head-title">${esc(c.title)}</span><span class="head-points">${c.base>0?esc(c.base)+'点':''}</span><small class="head-due">${due?'締切 '+short(due):'締切なし'}${missing?' ／ 未'+missing:''}${redo?' ／ 再'+redo:''}</small><div class="head-actions"><button type="button" title="${active===j?'ロック':'編集する'}" aria-label="${esc(c.title)}を${active===j?'ロック':'編集'}" onclick="lock(${j})">${active===j?unlockIcon:lockIcon}</button><label class="total-choice" title="この列を合計点数に含める。非表示でもこの設定は維持されます。"><input class="total-toggle" type="checkbox" data-total="${j}" aria-label="${esc(c.title)}を集計に含める" ${c.includeInTotal!==false?'checked':''} onchange="toggleTotal(${j},this.checked)"></label></div></th><th class="add"><button title="右に列を追加" onclick="add(${j+1})">＋</button></th>`;
  });
  const count=s.columns.filter(c=>c.includeInTotal!==false).length;
- h+=`<th class="sum-head" title="チェックを付けた列だけ合計します。非表示の列も含みます。">集計<small>${count}列対象</small></th></tr></thead><tbody>`;
- rosterNames.forEach((n,i)=>{
-  h+=`<tr><td class="name"><b>${i+1}</b>${esc(kanaMode?rosterKana[i]:n)}</td>`;
+ h+=`<th class="sum-head" title="チェックを付けた列だけ合計します。非表示の列も含みます。"><span>✓の列を集計</span><small>${count}列対象</small></th></tr></thead><tbody>`;
+ rows.forEach(row=>{
+  if(row.kind==='section'){h+=`<tr class="class-separator"><th colspan="${2+s.columns.length*2}">${esc(classLabel(row.classId))}</th></tr>`;return}
+  const classStudent=classInfo[row.classId].students.find(item=>item.id===row.studentId),studentIndex=classInfo[row.classId].students.findIndex(item=>item.id===row.studentId);
+  h+=`<tr><td class="name"><b>${esc(row.no)}</b>${esc(kanaMode?(classStudent.kana||classStudent.name):classStudent.name)}</td>`;
   s.columns.forEach((c,j)=>{
    if(c.hidden){h+='<td class="hidden-marker"></td>';return}
-   const v=val(j,i),x=numeric?score(v,c,j,i):displayValue(j,i);
-   h+=`<td><button class="cell ${numeric?'':markStyle(j,i)} ${active===j?'active':''}" data-redo="${j}:${i}" onclick="cell(${j},${i})">${esc(x??'－')}</button></td><td class="add"></td>`;
+   const v=recordValue(row.classId,row.studentId,c.id),x=numeric?recordScore(row.classId,row.studentId,c):recordDisplay(row.classId,row.studentId,c),legacyRedo=appState.ui.recordMode==='combined'?'':` data-redo="${j}:${studentIndex}"`;
+   h+=`<td><button class="cell ${numeric?'':recordMarkStyle(row.classId,row.studentId,c)} ${active===j?'active':''}"${legacyRedo} data-class-id="${esc(row.classId)}" data-student-id="${esc(row.studentId)}" data-column-id="${esc(c.id)}" onclick="cellById('${esc(row.classId)}','${esc(row.studentId)}','${esc(c.id)}')">${esc(x??'－')}</button></td><td class="add"></td>`;
   });
-  h+=`<td class="sum">${total(i)}</td></tr>`;
+  h+=`<td class="sum">${recordTotal(row.classId,row.studentId)}</td></tr>`;
  });
  $('table').innerHTML=h+'</tbody>';$('view').textContent=numeric?'記録':'数値';
  $('status').textContent=active<0?'全列ロック中｜端末内保存の試用版｜別端末とは同期されません｜定期的に手動バックアップ｜架空名簿で確認できます':'編集中：'+s.columns[active].title+'｜この端末に自動保存（別端末とは同期されません）';
  palette();scheduleSave();requestAnimationFrame(()=>{if(typeof clampFloat==='function')clampFloat()});
 }
 
-function palette(){$('tools').hidden=active<0||$('fold').textContent==='+';$('numBox').hidden=method!=='number';$('palette').hidden=method==='number';$('dateBox').hidden=mode!=='日付'||method==='cycle'&&!override;let a=sheet().type==='evaluation'?['○','△','×','欠']:['○','△','×','欠','再','日付'];$('palette').innerHTML=a.map(x=>`<button style="background:${colors[x]}" ${method==='cycle'&&['○','△','×'].includes(x)?'disabled':''} onclick="mode='${x}';override=method==='cycle';if(mode==='日付')$('date').value=today();palette()">${x}</button>`).join('')+(method==='cycle'?'<button class="wide" onclick="override=false;palette()">↩ 連続へ</button>':'')+(method==='direct'?'<button class="wide" onclick="fill(\'○\')">残りを○</button><button class="wide" onclick="fill(\'×\')">残りを×</button>':'')+(sheet().type==='submission'?'<button class="wide" style="background:#eee6f8" onclick="batchReturn()">再提出分を返却</button>':'')}
-function modal(h,extra=''){$('modal').innerHTML='<div class="overlay"><div class="dialog '+extra+'">'+h+'</div></div>'}function dismissModal(){$('modal').innerHTML=''}function lock(j){if(active===j){active=-1;method='';render();return}active=j;override=false;if(sheet().type==='number'){method='number';render();return}modal(`<h3>${esc(sheet().columns[j].title)}</h3><p>入力方式を選択</p><footer><button onclick="method='cycle';dismissModal();render()">連続タップ</button><button onclick="method='direct';dismissModal();render()">パレット指定</button></footer>`);render()}function cell(j,i){if(j!==active||numeric)return;if(method==='number'){numberRow=i;$('number').value=val(j,i);return}let v=method==='cycle'&&!override?['','○','△','×'][(['','○','△','×'].indexOf(val(j,i))+1)%4]:mode==='日付'?'日付':mode;if(sheet().type==='submission')storeSubmission(j,i,v);else setVal(j,i,v)}function fill(v){if(active<0)return;rosterNames.forEach((_,i)=>{if(!val(active,i))sheet().values[stableKey(active,i)]=v});render()}function add(j){modal(`<h3>列を追加</h3><label>タイトル<input id="title" placeholder="新しい課題"></label>${sheet().type==='submission'?`<label>提出期限<input type="date" id="due" value="${today()}"></label><label><input type="checkbox" id="inherit" checked> 左の列の減点設定を引き継ぐ</label><label>減点間隔（日）<input type="number" id="interval" value="${sheet().columns[j-1]?.interval||3}"></label><label>減点幅<input type="number" id="penalty" value="${sheet().columns[j-1]?.penalty||1}"></label>`:''}<footer><button onclick="dismissModal()">キャンセル</button><button onclick="saveAdd(${j})">追加</button></footer>`)}function saveAdd(j){let title=$('title').value.trim();if(!title)return alert('タイトルを入力してください');let prev=sheet().columns[j-1],c={id:M.defaultIdFactory('column'),title,includeInTotal:true,hidden:false,due:$('due')?.value||'',base:5,interval:Math.max(1,+$('interval')?.value||3),penalty:Math.max(0,+$('penalty')?.value||1),basis:prev?.basis||'days',redoPenalty:prev?.redoPenalty??1,zeroDays:prev?.zeroDays??30,zeroFloor:prev?.zeroFloor??true};if($('inherit')?.checked&&prev)c.base=prev.base;sheet().columns.splice(j,0,c);active=-1;dismissModal();render()}function updateIntervalLabel(){let b=$('editBasis')?.value,el=$('intervalQuestion');if(!el)return;el.textContent=b==='lesson'?'授業実施回数の何回ごとに減点しますか？':b==='days'?'何日ごとに減点しますか？':'減点なし（間隔の設定は不要）';let field=$('editInterval');if(field)field.disabled=b==='none'}function editColumn(j){let c=sheet().columns[j];modal(`<h3>列の設定：${esc(c.title)}</h3><label>タイトル<input id="editTitle" value="${esc(c.title)}"></label>${sheet().type==='submission'?`<label>提出期限<input id="editDue" type="date" value="${esc(c.due||'')}"></label><label>満点<input id="editBase" type="number" min="0" value="${c.base}"></label><label>減点方式<select id="editBasis" onchange="updateIntervalLabel()"><option value="days" ${c.basis==='days'?'selected':''}>日数基準</option><option value="lesson" ${c.basis==='lesson'?'selected':''}>授業日基準（クラス設定を参照）</option><option value="none" ${c.basis==='none'?'selected':''}>減点なし</option></select></label><label><span id="intervalQuestion">減点間隔</span><input id="editInterval" type="number" min="1" value="${c.interval}"></label><label>減点確定ごとに何点減らしますか？<input id="editPenalty" type="number" min="0" value="${c.penalty}"></label><label>再提出対象を減点する場合は何点引きますか？<input id="editRedo" type="number" min="0" value="${c.redoPenalty}"></label><p class="hint">※ 再提出が必要なことを児童に伝え、課題を返却するまでの間は、遅延による追加減点は確定しません。返却後、次の授業日を過ぎると、設定したルールに従って減点します。</p><label>未提出を0点確定する日数<input id="editZero" type="number" min="1" value="${c.zeroDays}"></label><label><input id="editFloor" type="checkbox" ${c.zeroFloor?'checked':''}> 減点が0点に達したら確定</label><p class="hint">変更した評価基準は、この列の全児童に適用されます。既存の提出日は変わりません。</p>`:''}<footer><button onclick="dismissModal()">戻る</button><button onclick="saveColumn(${j})">全員に適用</button></footer>`);updateIntervalLabel()}
-function saveColumn(j){let c=sheet().columns[j];c.title=$('editTitle').value.trim()||c.title;if(sheet().type==='submission'){c.due=$('editDue').value;c.base=Math.max(0,+$('editBase').value||0);c.basis=$('editBasis').value;c.interval=Math.max(1,+$('editInterval').value||1);c.penalty=Math.max(0,+$('editPenalty').value||0);c.redoPenalty=Math.max(0,+$('editRedo').value||0);c.zeroDays=Math.max(1,+$('editZero').value||30);c.zeroFloor=$('editFloor').checked}dismissModal();render()}
-function menu(j){modal(`<h3>${esc(sheet().columns[j].title)}</h3><footer style="flex-wrap:wrap"><button onclick="dismissModal();editColumn(${j})">列の設定</button><button onclick="sheet().columns[${j}].hidden=true;active=-1;dismissModal();render()">非表示</button><button onclick="dismissModal();add(${j+1})">設定を引き継いで追加</button><button onclick="dismissModal()">閉じる</button></footer>`)}
+function palette(){$('tools').hidden=active<0||$('fold').textContent==='+';$('numBox').hidden=method!=='number';$('palette').hidden=method==='number';$('dateBox').hidden=mode!=='日付'||method==='cycle'&&!override;const type=sheet().type,entries=Palette.paletteForSheet(appState.preferences,type).filter(entry=>entry.visible);$('palette').innerHTML=entries.map(({value:x})=>x==='再返'?`<button style="background:${colors[x]}" onclick="batchReturn()">再返</button>`:`<button style="background:${colors[x]||'#fff'}" ${method==='cycle'?'disabled':''} onclick="mode='${x}';override=method==='cycle';if(mode==='日付')$('date').value=today();palette()">${x}</button>`).join('')+(method==='cycle'?'<button class="wide" onclick="override=false;palette()">↩ 連続へ</button>':'')+(method==='direct'?(type==='evaluation'?'<button class="wide" onclick="fill(\'A\')">残りをA</button><button class="wide" onclick="fill(\'C\')">残りをC</button>':'<button class="wide" onclick="fill(\'○\')">残りを○</button><button class="wide" onclick="fill(\'×\')">残りを×</button>'):'')}
+function storeSubmissionById(classId,studentId,columnId,value){const bucket=recordBucket(classId),key=M.recordKey(columnId,studentId),column=sheet().columns.find(item=>item.id===columnId),old=bucket.values[key]||'';let details={...(bucket.meta[key]||{})};if(value==='再'&&(old==='再'||old==='再⚠')){render();return}if(value===old&&value!=='日付'){render();return}if(value==='日付'){const date=$('date').value||today();if(dateIndex(date)===null){alert('提出日を確認してください');return}details.submitted=date;if(details.redo||old.startsWith('再')){details.redo=true;value='再'}else value=date}else if(value==='再'){details={...details,redo:true,submitted:null,initialSubmitted:details.initialSubmitted||details.submitted||(isDate(old)?old:old==='○'?columnForClass(column,classId).due:null),returned:null,redoDue:null}}else if(value==='○'){if(details.redo){details.submitted=today();value='再'}else if(recordEvaluation(classId,studentId,column).zeroLocked){details.submitted=details.submitted||today();value=details.submitted}else details={}}else if(value==='×'||value==='欠'||value==='△'){details.submitted=null}else if(value===''){details={}}delete details.zeroLocked;bucket.meta[key]=details;bucket.values[key]=value;render()}
+function cellById(classId,studentId,columnId){const columnIndex=sheet().columns.findIndex(item=>item.id===columnId);if(columnIndex!==active||numeric)return;if(method==='number'){numberTarget={classId,studentId,columnId};$('number').value=recordValue(classId,studentId,columnId);return}const cycle=sheet().type==='evaluation'?['','A','B','C']:['','○','×'],old=recordValue(classId,studentId,columnId),value=method==='cycle'&&!override?cycle[(cycle.indexOf(old)+1)%cycle.length]:mode==='日付'?'日付':mode;if(sheet().type==='submission')storeSubmissionById(classId,studentId,columnId,value);else{recordBucket(classId).values[M.recordKey(columnId,studentId)]=value;render()}}
+function modal(h,extra=''){$('modal').innerHTML='<div class="overlay"><div class="dialog '+extra+'">'+h+'</div></div>'}function dismissModal(){$('modal').innerHTML=''}function lock(j){if(active===j){active=-1;method='';render();return}active=j;override=false;if(sheet().type==='number'){method='number';render();return}modal(`<h3>${esc(sheet().columns[j].title)}</h3><p>入力方式を選択</p><footer><button onclick="method='cycle';dismissModal();render()">連続タップ</button><button onclick="method='direct';dismissModal();render()">パレット指定</button></footer>`);render()}function cell(j,i){if(j!==active||numeric)return;if(method==='number'){numberRow=i;$('number').value=val(j,i);return}const cycle=sheet().type==='evaluation'?['','A','B','C']:['','○','×'];let v=method==='cycle'&&!override?cycle[(cycle.indexOf(val(j,i))+1)%cycle.length]:mode==='日付'?'日付':mode;if(sheet().type==='submission')storeSubmission(j,i,v);else setVal(j,i,v)}function fill(v){if(active<0)return;const column=sheet().columns[active];recordRows().filter(row=>row.kind==='student').forEach(row=>{const key=M.recordKey(column.id,row.studentId),bucket=recordBucket(row.classId);if(!bucket.values[key])bucket.values[key]=v});render()}function add(j){modal(`<h3>列を追加</h3><label>タイトル<input id="title" placeholder="新しい課題"></label>${sheet().type==='submission'?`<label>提出期限<input type="date" id="due" value="${today()}"></label><label><input type="checkbox" id="inherit" checked> 左の列の減点設定を引き継ぐ</label><label>減点間隔（日）<input type="number" id="interval" value="${sheet().columns[j-1]?.interval||3}"></label><label>減点幅<input type="number" id="penalty" value="${sheet().columns[j-1]?.penalty||1}"></label>`:''}<footer><button onclick="dismissModal()">キャンセル</button><button onclick="saveAdd(${j})">追加</button></footer>`)}function saveAdd(j){let title=$('title').value.trim();if(!title)return alert('タイトルを入力してください');let prev=sheet().columns[j-1],c={id:M.defaultIdFactory('column'),title,includeInTotal:true,hidden:false,due:$('due')?.value||'',base:5,interval:Math.max(1,+$('interval')?.value||3),penalty:Math.max(0,+$('penalty')?.value||1),basis:prev?.basis||'days',redoPenalty:prev?.redoPenalty??1,zeroDays:prev?.zeroDays??30,zeroFloor:prev?.zeroFloor??true};if($('inherit')?.checked&&prev)c.base=prev.base;sheet().columns.splice(j,0,c);active=-1;dismissModal();render()}function updateIntervalLabel(){let b=$('editBasis')?.value,el=$('intervalQuestion');if(!el)return;el.textContent=b==='lesson'?'授業実施回数の何回ごとに減点しますか？':b==='days'?'何日ごとに減点しますか？':'減点なし（間隔の設定は不要）';let field=$('editInterval');if(field)field.disabled=b==='none'}function editColumn(j){let c=sheet().columns[j],due=columnForClass(c,cls).due;modal(`<h3>列の設定：${esc(c.title)}</h3><label>タイトル<input id="editTitle" value="${esc(c.title)}"></label>${sheet().type==='submission'?`<label>提出期限<input id="editDue" type="date" value="${esc(due||'')}"></label><label>満点<input id="editBase" type="number" min="0" value="${c.base}"></label><label>減点方式<select id="editBasis" onchange="updateIntervalLabel()"><option value="days" ${c.basis==='days'?'selected':''}>日数基準</option><option value="lesson" ${c.basis==='lesson'?'selected':''}>授業日基準（クラス設定を参照）</option><option value="none" ${c.basis==='none'?'selected':''}>減点なし</option></select></label><label><span id="intervalQuestion">減点間隔</span><input id="editInterval" type="number" min="1" value="${c.interval}"></label><label>減点確定ごとに何点減らしますか？<input id="editPenalty" type="number" min="0" value="${c.penalty}"></label><label>再提出対象を減点する場合は何点引きますか？<input id="editRedo" type="number" min="0" value="${c.redoPenalty}"></label><p class="hint">※ 再提出が必要なことを児童に伝え、課題を返却するまでの間は、遅延による追加減点は確定しません。返却後、次の授業日を過ぎると、設定したルールに従って減点します。</p><label>未提出を0点確定する日数<input id="editZero" type="number" min="1" value="${c.zeroDays}"></label><label><input id="editFloor" type="checkbox" ${c.zeroFloor?'checked':''}> 減点が0点に達したら確定</label><p class="hint">変更した評価基準は、この列の全児童に適用されます。既存の提出日は変わりません。</p>`:''}<footer><button onclick="dismissModal()">戻る</button><button onclick="saveColumn(${j})">全員に適用</button></footer>`);updateIntervalLabel()}
+function saveColumn(j){let c=sheet().columns[j];c.title=$('editTitle').value.trim()||c.title;if(sheet().type==='submission'){const due=$('editDue').value,definition=sheetDefinition();if(definition?.scope.type==='group'){definition.dueDatesByClass[cls]||={};definition.dueDatesByClass[cls][c.id]=due}else c.due=due;c.base=Math.max(0,+$('editBase').value||0);c.basis=$('editBasis').value;c.interval=Math.max(1,+$('editInterval').value||1);c.penalty=Math.max(0,+$('editPenalty').value||0);c.redoPenalty=Math.max(0,+$('editRedo').value||0);c.zeroDays=Math.max(1,+$('editZero').value||30);c.zeroFloor=$('editFloor').checked}dismissModal();render()}
+function menu(j){const share=sheetDefinition()?.scope.type==='class'&&appState.groups.some(group=>group.classIds.includes(cls))?'<button onclick="dismissModal();shareSheet()">合同グループで共有</button>':'';modal(`<h3>${esc(sheet().columns[j].title)}</h3><footer style="flex-wrap:wrap"><button onclick="dismissModal();editColumn(${j})">列の設定</button><button onclick="sheet().columns[${j}].hidden=true;active=-1;dismissModal();render()">非表示</button><button onclick="dismissModal();add(${j+1})">設定を引き継いで追加</button>${share}<button onclick="dismissModal()">閉じる</button></footer>`)}
+function shareSheet(){const groups=appState.groups.filter(group=>group.classIds.includes(cls));if(!groups.length){modal('<h3>合同グループで共有</h3><p>先に設定で合同グループを作成してください。</p><footer><button onclick="dismissModal()">閉じる</button><button onclick="dismissModal();openSettings(\'groups\')">合同グループ設定</button></footer>');return}modal(`<h3>合同グループで共有</h3><p>このシートの列名・配点・集計設定を合同グループで共通にします。締切日はクラスごとに設定できます。</p><label>合同グループ<select id="shareGroup">${groups.map(group=>`<option value="${esc(group.id)}">${esc(group.name)}</option>`).join('')}</select></label><footer><button onclick="dismissModal()">キャンセル</button><button onclick="confirmShareSheet()">共有する</button></footer>`)}
+function confirmShareSheet(){const groupId=$('shareGroup').value,definition=sheetDefinition();if(!definition)return;if(!confirm('選択したシートだけを合同グループで共有します。現在のクラスの記録は残り、他のクラスは空欄から始まります。続けますか？'))return;const classId=cls,sheetId=definition.id;applyState(W.promoteSheetToGroup(appState,{sheetId,groupId}));cls=classId;idx=Math.max(0,(db[cls]||[]).findIndex(item=>item.id===sheetId));appState.ui.view='record';appState.ui.currentGroupId=groupId;appState.ui.recordMode='class';dismissModal();render()}
 
 // Class management: independent from MITORI, using its registration workflow.
 function syncRoster(){const r=classInfo[cls];rosterNames=r?.students?.map(x=>x.name)||names;rosterKana=r?.students?.map(x=>x.kana||x.name)||kana;}
@@ -348,8 +413,19 @@ function saveClassSettings(removeMissing=false){
  const byNo=new Map(imported.map(student=>[Number(student.no),student]));
  const finalCount=Math.max(count,...imported.map(student=>Number(student.no)||0));
  const finalStudents=Array.from({length:finalCount},(_,i)=>byNo.get(i+1)||{id:M.defaultIdFactory('student'),no:String(i+1),name:'（未登録）',kana:''});
- if(classEditingNew){classes.push(key);db[key]=[create('提出物チェック','submission'),create('活動評価','evaluation'),create('点数記録','number')]}
- classInfo[key]={id:key,school,name,year,count:finalCount,weekdays,students:finalStudents,exceptions:previous?.exceptions||{},sheets:db[key]};
+ const classFields={id:key,school,name,year,count:finalCount,weekdays,students:finalStudents,exceptions:previous?.exceptions||{}};
+ if(classEditingNew){
+  const legacy={appId:M.APP_ID,schemaVersion:1,savedAt:new Date().toISOString(),ui:{activeClassId:key,activeSheetId:null,lastColumnId:null,kanaMode:false,numeric:false},classes:[{...classFields,sheets:[create('提出物チェック','submission'),create('活動評価','evaluation'),create('点数記録','number')]}]};
+  legacy.ui.activeSheetId=legacy.classes[0].sheets[0].id;
+  const fragment=M.migrateState(legacy);
+  appState.classes.push(fragment.classes[0]);
+  appState.sheetDefinitions.push(...fragment.sheetDefinitions);
+  appState.classRecords[key]=fragment.classRecords[key];
+  applyState(appState);
+ }else{
+  Object.assign(previous,classFields);
+  classInfo[key]=previous;
+ }
  classDrafts.delete(classFormOwner);classFormOwner=null;classEditingNew=false;
  cls=key;idx=0;active=-1;syncRoster();dismissModal();render();
 }
@@ -370,6 +446,17 @@ initClassInfo();
 let holdTimer=null,holdTriggered=false;
 $('table').addEventListener('dblclick',e=>{let el=e.target.closest('[data-redo]');if(!el)return;let [j,i]=el.dataset.redo.split(':').map(Number);if(meta(j,i).redo)redoDetails(j,i)});
 $('table').addEventListener('contextmenu',e=>{let el=e.target.closest('[data-redo]');if(!el)return;e.preventDefault();let [j,i]=el.dataset.redo.split(':').map(Number);redoDetails(j,i)});
-$('keys').innerHTML=['7','8','9','4','5','6','1','2','3','.','0','⌫','Enter'].map(k=>`<button class="${k==='Enter'?'enter':''}" onclick="key('${k}')">${k}</button>`).join('');function key(k){let x=$('number');if(k==='Enter'){if(x.value!=='')setVal(active,numberRow,x.value);if(numberRow<rosterNames.length-1)numberRow++;x.value=val(active,numberRow)}else if(k==='⌫')x.value=x.value.slice(0,-1);else if(k!=='.'||!x.value.includes('.'))x.value+=k}$('cl').onchange=e=>{if(e.target.value==='__settings__'){openClassSettings();render();return}cls=e.target.value;idx=0;active=-1;syncRoster();render()};$('sh').onchange=e=>{idx=+e.target.value;active=-1;render()};$('view').onclick=()=>{numeric=!numeric;render()};$('date').value=today();$('today').onclick=()=>$('date').value=today();$('fold').onclick=()=>{$('fold').textContent=$('fold').textContent==='−'?'+':'−';palette()};let drag=null;$('drag').addEventListener('pointerdown',e=>{if(e.target.tagName==='BUTTON')return;let r=$('float').getBoundingClientRect();drag={dx:e.clientX-r.left,dy:e.clientY-r.top};$('drag').setPointerCapture(e.pointerId)});$('drag').addEventListener('pointermove',e=>{if(!drag)return;let f=$('float');f.style.left=Math.max(0,Math.min(innerWidth-f.offsetWidth,e.clientX-drag.dx))+'px';f.style.top=Math.max(0,Math.min(innerHeight-f.offsetHeight,e.clientY-drag.dy))+'px';f.style.right='auto'});$('drag').addEventListener('pointerup',()=>drag=null);function clampFloat(){let f=$('float'),r=f.getBoundingClientRect();if(r.right>innerWidth||r.bottom>innerHeight||r.left<0||r.top<42){f.style.left=Math.max(0,Math.min(innerWidth-f.offsetWidth,r.left))+'px';f.style.top=Math.max(42,Math.min(innerHeight-f.offsetHeight,r.top))+'px';f.style.right='auto'}}addEventListener('resize',clampFloat);initializePersistence().then(()=>{initializePwa();$('float').style.top=Math.max(120,innerHeight-$('float').offsetHeight-54)+'px';clampFloat()});
+function preserveSharedSheetOnClassChange(event){
+ if(event.target.value==='__settings__')return;
+ const preferredSheetId=sheet()?.id||null;
+ queueMicrotask(()=>{
+  if(cls!==event.target.value||!preferredSheetId)return;
+  const preferredIndex=(db[cls]||[]).findIndex(item=>item.id===preferredSheetId);
+  if(preferredIndex<0)return;
+  idx=preferredIndex;active=-1;numberTarget=null;appState.ui.currentSheetId=preferredSheetId;syncRoster();render();
+ });
+}
+$('cl').addEventListener('change',preserveSharedSheetOnClassChange,true);
+$('keys').innerHTML=['7','8','9','4','5','6','1','2','3','.','0','⌫','Enter'].map(k=>`<button class="${k==='Enter'?'enter':''}" onclick="key('${k}')">${k}</button>`).join('');function key(k){let x=$('number');if(k==='Enter'){if(numberTarget){if(x.value!=='')recordBucket(numberTarget.classId).values[M.recordKey(numberTarget.columnId,numberTarget.studentId)]=x.value;const rows=recordRows().filter(row=>row.kind==='student'),position=rows.findIndex(row=>row.classId===numberTarget.classId&&row.studentId===numberTarget.studentId),next=rows[Math.min(position+1,rows.length-1)];numberTarget=next?{classId:next.classId,studentId:next.studentId,columnId:numberTarget.columnId}:numberTarget;x.value=recordValue(numberTarget.classId,numberTarget.studentId,numberTarget.columnId);render()}else{if(x.value!=='')setVal(active,numberRow,x.value);if(numberRow<rosterNames.length-1)numberRow++;x.value=val(active,numberRow)}}else if(k==='⌫')x.value=x.value.slice(0,-1);else if(k!=='.'||!x.value.includes('.'))x.value+=k}$('cl').onchange=e=>{if(e.target.value==='__settings__'){openSettings('classes');return}cls=e.target.value;idx=0;active=-1;numberTarget=null;appState.ui.view='record';syncRoster();render()};$('sh').onchange=e=>{idx=+e.target.value;active=-1;numberTarget=null;appState.ui.currentSheetId=sheet()?.id||null;render()};$('view').onclick=()=>{numeric=!numeric;render()};$('date').value=today();$('today').onclick=()=>$('date').value=today();$('fold').onclick=()=>{$('fold').textContent=$('fold').textContent==='−'?'+':'−';palette()};let drag=null;$('drag').addEventListener('pointerdown',e=>{if(e.target.tagName==='BUTTON')return;let r=$('float').getBoundingClientRect();drag={dx:e.clientX-r.left,dy:e.clientY-r.top};$('drag').setPointerCapture(e.pointerId)});$('drag').addEventListener('pointermove',e=>{if(!drag)return;let f=$('float');f.style.left=Math.max(0,Math.min(innerWidth-f.offsetWidth,e.clientX-drag.dx))+'px';f.style.top=Math.max(0,Math.min(innerHeight-f.offsetHeight,e.clientY-drag.dy))+'px';f.style.right='auto'});$('drag').addEventListener('pointerup',()=>drag=null);function clampFloat(){let f=$('float'),r=f.getBoundingClientRect();if(f.hidden)return;if(r.right>innerWidth||r.bottom>innerHeight||r.left<0||r.top<42){f.style.left=Math.max(0,Math.min(innerWidth-f.offsetWidth,r.left))+'px';f.style.top=Math.max(42,Math.min(innerHeight-f.offsetHeight,r.top))+'px';f.style.right='auto'}}addEventListener('resize',clampFloat);initializePersistence().then(()=>{initializePwa();$('float').style.top=Math.max(120,innerHeight-$('float').offsetHeight-54)+'px';clampFloat()});
 
 

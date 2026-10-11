@@ -180,7 +180,7 @@
     if (sheetType === 'submission') return submissionEvaluation({ column, value, meta, schedule, today }).current;
     if (!value || value === '欠' || value === '再') return null;
     if (sheetType === 'number') return Number.isNaN(Number(value)) ? null : Number(value);
-    if (sheetType === 'evaluation') return ({ '○': 3, '△': 2, '×': 1 })[value] ?? null;
+    if (sheetType === 'evaluation') return ({ A: 3, B: 2, C: 1, '○': 3, '△': 2, '×': 1 })[value] ?? null;
     return null;
   }
 
@@ -190,4 +190,3 @@
     delayUnits, penaltyFor, submissionEvaluation, scoreRecord
   });
 })(globalThis);
-

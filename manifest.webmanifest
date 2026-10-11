@@ -1,11 +1,13 @@
 {
   "name": "TSUKERU チェック表",
   "short_name": "TSUKERU",
+  "id": "./",
   "description": "授業中にすばやく評価を記録できる、端末内保存のチェック表",
   "lang": "ja",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#fffdfa",
   "theme_color": "#fffdfa",
   "icons": [
