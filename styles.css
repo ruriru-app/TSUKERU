@@ -268,7 +268,9 @@ th.name { background:#fbfaf7; }
 .head-menu button { min-width:32px;min-height:28px;padding:0;border:0;background:transparent;font-size:20px;font-weight:800;line-height:1; }
 .head-title { display:grid;place-items:center;min-height:38px;padding:2px;white-space:normal;font-size:13px;font-weight:800;line-height:1.25; }
 .head-points { display:block;min-height:18px;color:var(--accent-dark);font-size:11px;font-weight:800; }
-.head-due { display:grid;place-items:center;min-height:30px;color:var(--muted);font-size:9px;font-weight:500;line-height:1.25;white-space:normal; }
+.head-due,.head-counts { display:grid;place-items:center;color:var(--muted);font-size:9px;font-weight:500;line-height:1.15;white-space:nowrap; }
+.head-due { min-height:16px; }
+.head-counts { min-height:14px; }
 .head-actions { display:flex;justify-content:center;align-items:center;gap:4px;padding-top:2px; }
 .lock-state,.head-actions .total-choice { display:grid;place-items:center;width:34px;min-height:32px;padding:0;border:0;background:transparent; }
 .lock-state { font-size:18px;line-height:1; }
