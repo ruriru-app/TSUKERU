@@ -204,7 +204,13 @@
     function renderPreview() {
       const preview = rootElement.querySelector('[data-palette-preview-buttons]');
       if (!preview) return;
-      const layout = P.paletteLayout(draft);
+      const layout = P.paletteLayout({
+        ...draft,
+        entries: [
+          ...draft.entries,
+          { id:'system-clear', label:'消去', color:'stone', score:null, action:'clear', slotSpan:1, visible:true }
+        ]
+      });
       preview.className = `palette-preview-buttons palette-size-${draft.size}`;
       preview.dataset.paletteColumns = String(layout.columns);
       preview.style.setProperty('--palette-columns', String(layout.columns));
@@ -260,7 +266,7 @@
           <div class="palette-library-scroll">${list}</div>
         </section>
         <section class="palette-workbench">
-          <div class="palette-preview"><div><h3>プレビュー</h3><span>${escapeHtml(SIZE_NAMES[draft.size] || '標準')}</span></div><div class="palette-preview-shell"><div class="drag"><span>⠿ 入力パレット</span><button type="button" aria-label="折りたたむ">−</button></div><div data-palette-preview-buttons></div></div></div>
+          <div class="palette-preview"><div class="palette-preview-heading"><h3>プレビュー</h3><span>${escapeHtml(SIZE_NAMES[draft.size] || '標準')}</span></div><div class="palette-preview-stage"><div class="palette-preview-shell"><div class="drag"><span>⠿ 入力パレット</span><button type="button" aria-label="折りたたむ">−</button></div><div data-palette-preview-buttons></div></div></div></div>
           <form class="palette-editor">
             <div class="palette-editor-heading"><div><h3>${selectedId ? 'パレットを編集' : 'パレットを作成'}</h3><p>${preferences.palettes.find(item => item.id === selectedId)?.preset ? 'プリセットは複製して保存されます。' : '列へ適用した内容は、その列にコピーして保持されます。'}</p></div><button type="submit" class="primary">パレットを保存</button></div>
             <div class="palette-editor-basics">

@@ -7,8 +7,7 @@
     ['groups', '合同グループ設定'],
     ['sheets', 'シート設定'],
     ['archived', '保管済みシート'],
-    ['palette', 'パレット設定'],
-    ['reset', '年度データ削除']
+    ['palette', 'パレット設定']
   ];
   let activeSection = 'classes';
   let adapter = null;
@@ -24,15 +23,16 @@
 
   function shell() {
     const buttons = sections.map(([id, label]) => `<button type="button" data-settings-nav="${id}" class="${activeSection === id ? 'selected' : ''}">${label}</button>`).join('');
-    const options = sections.map(([id, label]) => `<option value="${id}" ${activeSection === id ? 'selected' : ''}>${label}</option>`).join('');
-    mountPoint.innerHTML = `<div class="settings-layout ${activeSection === 'palette' ? 'palette-settings-layout' : ''}"><aside class="settings-sidebar" aria-label="設定メニュー"><h1>設定</h1><nav>${buttons}</nav></aside><div class="settings-main"><label class="settings-nav-select-wrap">設定メニュー<select class="settings-nav-select" aria-label="設定メニュー">${options}</select></label><div class="settings-content"></div></div></div>`;
+    const options = sections.map(([id, label]) => `<option value="${id}" ${activeSection === id ? 'selected' : ''}>${label}</option>`).join('') + `<option value="reset" ${activeSection === 'reset' ? 'selected' : ''}>危険操作：全データ初期化</option>`;
+    mountPoint.innerHTML = `<div class="settings-layout ${activeSection === 'palette' ? 'palette-settings-layout' : ''}"><aside class="settings-sidebar" aria-label="設定メニュー"><h1>設定</h1><nav>${buttons}</nav><section class="settings-danger-nav"><strong>危険操作</strong><p>保存済みのクラス・合同グループ・シート・名簿・評価記録をすべて削除します。パレット設定は残ります。</p><button type="button" data-settings-danger-reset ${activeSection === 'reset' ? 'aria-current="page"' : ''}>全データ初期化</button></section></aside><div class="settings-main"><label class="settings-nav-select-wrap">設定メニュー<select class="settings-nav-select" aria-label="設定メニュー">${options}</select></label><div class="settings-content"></div></div></div>`;
     mountPoint.querySelectorAll('[data-settings-nav]').forEach(button => button.addEventListener('click', () => selectSection(button.dataset.settingsNav)));
+    mountPoint.querySelector('[data-settings-danger-reset]').addEventListener('click', () => selectSection('reset'));
     mountPoint.querySelector('.settings-nav-select').addEventListener('change', event => selectSection(event.target.value));
     renderSection();
   }
 
   function selectSection(sectionId) {
-    if (!sections.some(([id]) => id === sectionId)) return;
+    if (sectionId !== 'reset' && !sections.some(([id]) => id === sectionId)) return;
     activeSection = sectionId;
     if (sectionId !== 'groups') groupDraft = null;
     if (sectionId !== 'sheets') sheetDraft = null;
@@ -233,9 +233,42 @@
 
   function renderArchived(content, state) {
     const archived = state.sheetDefinitions.filter(sheet => sheet.archivedAt);
-    const cards = archived.map(sheet => `<article class="settings-card" data-archived-sheet><div><strong>${escapeHtml(sheet.name)}</strong><span>保管日：${escapeHtml(new Date(sheet.archivedAt).toLocaleDateString('ja-JP'))}</span></div><button type="button" data-restore-sheet="${escapeHtml(sheet.id)}">復元</button></article>`).join('');
+    const cards = archived.map(sheet => `<article class="settings-card" data-archived-sheet><div><strong>${escapeHtml(sheet.name)}</strong><span>保管日：${escapeHtml(new Date(sheet.archivedAt).toLocaleDateString('ja-JP'))}</span></div><span class="settings-card-actions"><button type="button" data-restore-sheet="${escapeHtml(sheet.id)}">復元</button><button type="button" class="danger-outline" data-delete-archived-sheet="${escapeHtml(sheet.id)}">完全削除…</button></span></article>`).join('');
     content.innerHTML = `<div class="settings-section-heading"><div><h2>保管済みシート</h2><p>保管しても名簿・評価記録は残ります。必要なときに元の利用対象へ戻せます。</p></div></div><div class="settings-card-list">${cards || '<p class="settings-empty">保管済みシートはありません。</p>'}</div>`;
     content.querySelectorAll('[data-restore-sheet]').forEach(button => button.addEventListener('click', () => { adapter.updateState(W.restoreSheet(state, button.dataset.restoreSheet));renderSection(); }));
+    content.querySelectorAll('[data-delete-archived-sheet]').forEach(button => button.addEventListener('click', () => openArchivedDelete(state, button.dataset.deleteArchivedSheet)));
+  }
+
+  function openArchivedDelete(state, sheetId) {
+    const sheet = state.sheetDefinitions.find(item => item.id === sheetId);
+    if (!sheet) return;
+    try {
+      const summary = W.sheetDeletionSummary(state, sheetId);
+      const target = sheet.scope.type === 'group'
+        ? state.groups.find(item => item.id === sheet.scope.groupId)?.name || '合同グループ'
+        : summary.classIds.map(classId => classLabel(state, classId)).join('、');
+      root.modal(`<h3>保管済みシートを完全に削除</h3><p><strong>${escapeHtml(sheet.name)}</strong>を削除します。</p><p>評価記録：<strong>${summary.recordCount}件</strong><br>対象：${escapeHtml(target)}</p><div class="danger-warning"><strong>元に戻せません</strong><p>削除前にバックアップを保存してください。復元するときは、削除前のバックアップを「設定 → クラス設定」から読み込みます。</p></div><label>続けるには「削除」と入力してください<input id="deleteArchivedPhrase" autocomplete="off"></label><footer><button type="button" onclick="dismissModal()">キャンセル</button><button type="button" id="deleteArchivedConfirm" class="danger-button" disabled>シートを完全に削除</button></footer>`, 'archived-delete-dialog');
+      const phrase = root.document.querySelector('#deleteArchivedPhrase');
+      const confirmButton = root.document.querySelector('#deleteArchivedConfirm');
+      phrase.addEventListener('input', () => { confirmButton.disabled = phrase.value !== '削除'; });
+      confirmButton.addEventListener('click', () => confirmArchivedDelete(sheetId));
+    } catch (error) {
+      root.alert(error.message);
+    }
+  }
+
+  function confirmArchivedDelete(sheetId) {
+    const state = adapter.getState(), sheet = state.sheetDefinitions.find(item => item.id === sheetId);
+    if (root.document.querySelector('#deleteArchivedPhrase')?.value !== '削除') return;
+    if (!sheet) return root.alert('削除する保管済みシートが見つかりません');
+    if (!root.confirm(`「${sheet.name}」を完全に削除します。よろしいですか？`)) return;
+    try {
+      adapter.updateState(W.deleteArchivedSheet(state, sheetId));
+      root.dismissModal();
+      renderSection();
+    } catch (error) {
+      root.alert(error.message);
+    }
   }
 
   function renderPalette(content, state) {
@@ -282,7 +315,7 @@
   function mount(rootElement, nextAdapter, initialSection = activeSection) {
     mountPoint = rootElement;
     adapter = nextAdapter;
-    activeSection = sections.some(([id]) => id === initialSection) ? initialSection : 'classes';
+    activeSection = initialSection === 'reset' || sections.some(([id]) => id === initialSection) ? initialSection : 'classes';
     shell();
   }
 

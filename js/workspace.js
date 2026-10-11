@@ -698,6 +698,91 @@
     return validateWorkspace(next);
   }
 
+  function clearRecordCell(state, classId, sheetId, columnId, studentId) {
+    const next = migrateWorkspace(state);
+    const classRecord = next.classes.find(item => item.id === classId);
+    if (!classRecord) fail('クラスが見つかりません');
+    if (!classRecord.students.some(student => student.id === studentId)) fail('児童が見つかりません');
+    const sheet = next.sheetDefinitions.find(item => item.id === sheetId);
+    if (!sheet || !sheetAppliesToClass(next, sheet, classId)) fail('チェック表が見つかりません');
+    if (!sheet.columns.some(column => column.id === columnId)) fail('評価列が見つかりません');
+    const bucket = ensureClassRecord(next, classId, sheetId);
+    const key = recordKey(columnId, studentId);
+    delete bucket.values[key];
+    delete bucket.meta[key];
+    return validateWorkspace(next);
+  }
+
+  function recordCountForColumn(state, sheetId, columnId, classIds) {
+    const keys = new Set();
+    for (const classId of classIds) {
+      const bucket = state.classRecords[classId]?.[sheetId];
+      const columnKeys = new Set((state.classes.find(item => item.id === classId)?.students || []).map(student => recordKey(columnId, student.id)));
+      for (const key of [...Object.keys(bucket?.values || {}), ...Object.keys(bucket?.meta || {})]) {
+        if (columnKeys.has(key)) keys.add(`${classId}:${key}`);
+      }
+    }
+    return keys.size;
+  }
+
+  function columnDeletionSummary(state, sheetId, columnId) {
+    const current = migrateWorkspace(state);
+    const sheet = current.sheetDefinitions.find(item => item.id === sheetId);
+    if (!sheet) fail('チェック表が見つかりません');
+    if (!sheet.columns.some(column => column.id === columnId)) fail('評価列が見つかりません');
+    const classIds = classIdsForScope(current, sheet.scope);
+    return { recordCount: recordCountForColumn(current, sheetId, columnId, classIds), classIds };
+  }
+
+  function deleteSheetColumn(state, sheetId, columnId) {
+    const next = migrateWorkspace(state);
+    const sheet = next.sheetDefinitions.find(item => item.id === sheetId);
+    if (!sheet) fail('チェック表が見つかりません');
+    const columnIndex = sheet.columns.findIndex(column => column.id === columnId);
+    if (columnIndex < 0) fail('評価列が見つかりません');
+    if (sheet.columns.length === 1) fail('最後の1列は削除できません');
+    sheet.columns.splice(columnIndex, 1);
+    for (const dates of Object.values(sheet.dueDatesByClass)) delete dates[columnId];
+    for (const [classId, sheets] of Object.entries(next.classRecords)) {
+      const bucket = sheets[sheetId];
+      if (!bucket) continue;
+      const columnKeys = new Set((next.classes.find(item => item.id === classId)?.students || []).map(student => recordKey(columnId, student.id)));
+      for (const key of Object.keys(bucket.values)) if (columnKeys.has(key)) delete bucket.values[key];
+      for (const key of Object.keys(bucket.meta)) if (columnKeys.has(key)) delete bucket.meta[key];
+    }
+    if (next.ui.currentSheetId === sheetId && next.ui.lastColumnId === columnId) {
+      next.ui.lastColumnId = sheet.columns[0]?.id || null;
+    }
+    return validateWorkspace(next);
+  }
+
+  function sheetDeletionSummary(state, sheetId) {
+    const current = migrateWorkspace(state);
+    const sheet = current.sheetDefinitions.find(item => item.id === sheetId);
+    if (!sheet) fail('チェック表が見つかりません');
+    const classIds = classIdsForScope(current, sheet.scope);
+    const cells = new Set();
+    for (const classId of classIds) {
+      const bucket = current.classRecords[classId]?.[sheetId];
+      for (const key of [...Object.keys(bucket?.values || {}), ...Object.keys(bucket?.meta || {})]) cells.add(`${classId}:${key}`);
+    }
+    return { recordCount: cells.size, classIds };
+  }
+
+  function deleteArchivedSheet(state, sheetId) {
+    const next = migrateWorkspace(state);
+    const sheet = next.sheetDefinitions.find(item => item.id === sheetId);
+    if (!sheet) fail('チェック表が見つかりません');
+    if (!sheet.archivedAt) fail('使用中のチェック表です。先に保管してください');
+    next.sheetDefinitions = next.sheetDefinitions.filter(item => item.id !== sheetId);
+    for (const sheets of Object.values(next.classRecords)) delete sheets[sheetId];
+    if (next.ui.currentSheetId === sheetId) {
+      next.ui.currentSheetId = null;
+      next.ui.lastColumnId = null;
+    }
+    return validateWorkspace(next);
+  }
+
   function academicDataSummary(state) {
     const current = migrateWorkspace(state);
     return {
@@ -726,6 +811,7 @@
     ensureClassRecord, availableSheetsForClass, sheetsForGroup, dueSummaryForColumn,
     createGroup, updateGroup, promoteSheetToGroup, detachSheetFromGroup, rowsForSheet,
     removeClassFromGroup, deleteGroup, createSheetDefinition, updateSheetDefinition,
-    archiveSheet, restoreSheet, resetAcademicData, academicDataSummary
+    archiveSheet, restoreSheet, clearRecordCell, columnDeletionSummary, deleteSheetColumn,
+    sheetDeletionSummary, deleteArchivedSheet, resetAcademicData, academicDataSummary
   });
 })(globalThis);
